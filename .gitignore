@@ -1,0 +1,45 @@
+# MCP config contains OAuth client secret — never commit
+.mcp.json
+
+# Local Claude Code overrides
+.claude/settings.local.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+build/
+dist/
+next-env.d.ts
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Drizzle journal & generated migrations are committed; only ignore local snapshots/cache
+.drizzle/
+
+# Local fixtures + ingest reports — contain sensitive financial data
+scripts/data/
+scripts/ingest_master_sheet.report.md
+scripts/check-tables.output*
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
+*.tsbuildinfo
