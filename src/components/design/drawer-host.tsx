@@ -6,11 +6,24 @@ import { EntityDetail } from "./entity-detail";
 import { ExpenseDetail } from "./expense-detail";
 import { HarvestDetail } from "./harvest-detail";
 import { CashMovementDetail } from "./cash-movement-detail";
+import { TaskDetail } from "./task-detail";
 
 // `defaultAccountId` is the Finca EC account UUID (resolved server-side in
 // layout.tsx). The harvest drawer needs it when recording a brand-new
 // settlement that doesn't yet have a paidToAccountId of its own.
-export function DrawerHost({ defaultAccountId }: { defaultAccountId: string | null }) {
+//
+// `taskAssignees` / `taskCompanies` populate the dropdowns in the task
+// drawer (people + companies tables, fetched server-side once per layout
+// render).
+export function DrawerHost({
+  defaultAccountId,
+  taskAssignees,
+  taskCompanies,
+}: {
+  defaultAccountId: string | null;
+  taskAssignees: Array<{ id: string; name: string }>;
+  taskCompanies: Array<{ id: string; name: string }>;
+}) {
   const { state, close } = useDrawer();
 
   const isCompliance = state.kind === "compliance";
@@ -18,6 +31,7 @@ export function DrawerHost({ defaultAccountId }: { defaultAccountId: string | nu
   const isExpense = state.kind === "expense";
   const isHarvest = state.kind === "harvest";
   const isCashMovement = state.kind === "cashMovement";
+  const isTask = state.kind === "task";
 
   return (
     <>
@@ -37,6 +51,16 @@ export function DrawerHost({ defaultAccountId }: { defaultAccountId: string | nu
       </Drawer>
       <Drawer open={isCashMovement} onClose={close}>
         {isCashMovement && <CashMovementDetail item={state.item} onClose={close} />}
+      </Drawer>
+      <Drawer open={isTask} onClose={close}>
+        {isTask && (
+          <TaskDetail
+            item={state.item}
+            onClose={close}
+            assigneeOptions={taskAssignees}
+            companyOptions={taskCompanies}
+          />
+        )}
       </Drawer>
     </>
   );

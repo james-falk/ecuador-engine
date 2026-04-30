@@ -10,14 +10,19 @@ import type { ComplianceItem } from "@/lib/data";
 import type { ExpenseRow } from "@/lib/queries/expenses";
 import type { HarvestRow } from "@/lib/queries/harvests";
 import type { CashMovementRow } from "@/lib/queries/cash-movements";
+import type { TaskRow } from "@/lib/queries/tasks";
 
+// `task` is the only kind that supports a CREATE flow today (no item; the
+// drawer renders an empty form). All other kinds show details for an existing
+// row.
 type DrawerState =
   | { kind: "none" }
   | { kind: "compliance"; item: ComplianceItem }
   | { kind: "entity"; entityId: string }
   | { kind: "expense"; item: ExpenseRow }
   | { kind: "harvest"; item: HarvestRow }
-  | { kind: "cashMovement"; item: CashMovementRow };
+  | { kind: "cashMovement"; item: CashMovementRow }
+  | { kind: "task"; item: TaskRow | null };
 
 type DrawerContextValue = {
   state: DrawerState;
@@ -26,6 +31,8 @@ type DrawerContextValue = {
   openExpense: (item: ExpenseRow) => void;
   openHarvest: (item: HarvestRow) => void;
   openCashMovement: (item: CashMovementRow) => void;
+  openTask: (item: TaskRow) => void;
+  openTaskCreate: () => void;
   close: () => void;
 };
 
@@ -47,6 +54,8 @@ export function DrawerProvider({ children }: { children: React.ReactNode }) {
       openExpense: (item) => setState({ kind: "expense", item }),
       openHarvest: (item) => setState({ kind: "harvest", item }),
       openCashMovement: (item) => setState({ kind: "cashMovement", item }),
+      openTask: (item) => setState({ kind: "task", item }),
+      openTaskCreate: () => setState({ kind: "task", item: null }),
       close: () => setState({ kind: "none" }),
     }),
     [state]

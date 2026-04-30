@@ -1,8 +1,19 @@
-// Ecuador Engine — design data layer
-// Mirrors the EE_DATA shape from the design handoff (`data.js` v6).
-// This file is the bridge: the design imports from here; later we replace
-// each export with a real backend query (Drizzle, Drive, Gmail) without
-// touching the UI components that consume it.
+// Ecuador Engine — design data layer (shrinking).
+//
+// This file ORIGINALLY held mock data the design components consumed during
+// handoff. It's being retired. As of the steady-the-engine pass:
+//   • weather / pending / ops / recent — DELETED (Home + sidebar no longer
+//     consume them).
+//   • todos — kept temporarily until the tasks table replaces /pending
+//     (Slice 2.5).
+//   • entities / network / compliance / findEntity / findNetworkItem — kept
+//     because entity-detail.tsx and compliance-detail.tsx still consume them
+//     for the side drawer; will be removed when the Companies hub enrichment
+//     (Slice 6) routes those through DB queries.
+//
+// The TYPES below are still imported by query modules and components and
+// SHOULD STAY even after the runtime data is gone — they describe the
+// presentation shape (DB rows are adapted INTO this shape in lib/queries/*).
 
 export type EntityColor = "green" | "amber" | "sky";
 export type ComplianceStatus =
@@ -13,7 +24,6 @@ export type ComplianceStatus =
   | "in_flight"
   | "consultant_claims_done";
 export type ComplianceBucket = "importing" | "exporting" | "shipment";
-export type WeatherCond = "sun" | "cloud" | "humid";
 export type TodoPriority = "high" | "med" | "low";
 
 export type Entity = {
@@ -24,18 +34,6 @@ export type Entity = {
   kind: string;
   ids: Record<string, string>;
   color: EntityColor;
-};
-
-export type WeatherRow = {
-  city: string;
-  region: string;
-  tz: string;
-  tempF: number;
-  cond: WeatherCond;
-  condLabel: string;
-  hi: number;
-  lo: number;
-  role: string;
 };
 
 export type NetworkItem = {
@@ -62,31 +60,6 @@ export type ComplianceItem = {
   identifier: string | null;
   evidence: string;
   notes: string;
-};
-
-export type PendingItem = {
-  id: string;
-  title: string;
-  why: string;
-  since: string;
-};
-
-export type OpsSnapshot = {
-  weeklyHarvestKg: number;
-  monthlyHarvestKg: number;
-  localPriceKg: number;
-  landedCostCarton: number;
-  marketLowCarton: number;
-  marketHighCarton: number;
-  nextWindowSeasonNote: string;
-  daysUntilFirstShipment: number;
-};
-
-export type RecentItem = {
-  ts: string;
-  text: string;
-  kind: "doc" | "verified" | "harvest" | "quote";
-  ref: string;
 };
 
 export type TodoItem = {
@@ -119,12 +92,6 @@ export const entities: Entity[] = [
     ids: { DUNS: "119578585", EIN: "pending" },
     color: "sky",
   },
-];
-
-export const weather: WeatherRow[] = [
-  { city: "San Clemente", region: "Ecuador", tz: "ECT", tempF: 79, cond: "humid", condLabel: "Humid · light rain", hi: 82, lo: 71, role: "farm" },
-  { city: "Miami", region: "Florida", tz: "EDT", tempF: 84, cond: "sun", condLabel: "Mostly sunny", hi: 87, lo: 73, role: "port of entry" },
-  { city: "Garden City", region: "Michigan", tz: "EDT", tempF: 58, cond: "cloud", condLabel: "Overcast", hi: 62, lo: 46, role: "home base" },
 ];
 
 export const network: NetworkGroup[] = [
@@ -186,31 +153,6 @@ export const compliance: ComplianceItem[] = [
   { id: "receiving", title: "Receiving location — Miami", bucket: "shipment", area: "Logistics", jurisdiction: "US State", owner: "puresol", responsible: "You", status: "todo", identifier: null, evidence: "", notes: "" },
   { id: "phyto", title: "Phytosanitary certificate process", bucket: "exporting", area: "Phytosanitary", jurisdiction: "Ecuador", owner: "finca", responsible: "Isaac Garcia", status: "todo", identifier: null, evidence: "", notes: "Issued per shipment by Agrocalidad." },
   { id: "prior-notice", title: "Prior Notice filing process", bucket: "importing", area: "FDA", jurisdiction: "US Federal", owner: "puresol", responsible: "You", status: "todo", identifier: null, evidence: "", notes: "Filed per shipment via PNSI; OAA on file." },
-];
-
-export const pending: PendingItem[] = [
-  { id: "p-buyer", title: "Import 81 buyer leads", why: "No system to score or sequence them yet — Buyers module not built.", since: "2025-10-12" },
-  { id: "p-cost-model", title: "Lock landed cost model", why: "Waiting on broker quote + final freight selection to be precise.", since: "2025-10-19" },
-  { id: "p-grade-spec", title: "Define carton grade spec (A / B)", why: "No US buyer requirements yet to anchor against.", since: "2025-09-30" },
-];
-
-export const ops: OpsSnapshot = {
-  weeklyHarvestKg: 1620,
-  monthlyHarvestKg: 7000,
-  localPriceKg: 2.0,
-  landedCostCarton: 13.24,
-  marketLowCarton: 18.0,
-  marketHighCarton: 30.0,
-  nextWindowSeasonNote: "Spring window: $18–20/carton  ·  Fall window: $28–30/carton",
-  daysUntilFirstShipment: 47,
-};
-
-export const recent: RecentItem[] = [
-  { ts: "2025-10-29 14:02", text: "Tim Forrest checklist received", kind: "doc", ref: "compliance" },
-  { ts: "2025-10-26 10:11", text: "Finca DUNS verified · 889389069", kind: "verified", ref: "finca-duns" },
-  { ts: "2025-10-24 09:48", text: "Liquidación PDF #1041 ingested · 412 kg", kind: "harvest", ref: "harvests" },
-  { ts: "2025-10-22 16:30", text: "Seaboard quote received · GYE→MIA · 40′ FCL", kind: "quote", ref: "forwarder" },
-  { ts: "2025-10-19 11:05", text: "Liquidación PDF #1038 ingested · 388 kg", kind: "harvest", ref: "harvests" },
 ];
 
 export const todos: TodoItem[] = [

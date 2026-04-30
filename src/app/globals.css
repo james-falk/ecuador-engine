@@ -127,3 +127,18 @@ body { font-family: var(--font-sans); color: var(--text-0); }
     grid-template-columns: 1fr !important;
   }
 }
+
+/* Money color utilities. Use consistently across all surfaces:
+ *   .money-in    — settlements / fruit revenue / income
+ *   .money-out   — expenses / payments going out
+ *   .capital-in  — wires from US into FincaEC (US → EC)
+ *   .capital-out — wires from FincaEC back to US (EC → US) and negative net
+ */
+.ee .money-in     { color: var(--green); }
+.ee .money-out    { color: var(--amber); }
+.ee .capital-in   { color: var(--sky); }
+.ee .capital-out  { color: var(--rose); }
+.ee .money-in.num,
+.ee .money-out.num,
+.ee .capital-in.num,
+.ee .capital-out.num { font-variant-numeric: tabular-nums; }

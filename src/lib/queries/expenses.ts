@@ -1,9 +1,12 @@
 // Expenses pillar — read paths. Types live here (NOT in lib/data.ts) so the
 // design's mock module stays a clean copy of the original handoff.
+//
+// Data Entry tab needs `getWeekRows({ weekStartDate })` — see the export at
+// the bottom of this file.
 
 import { desc, and, gte, lte, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { expenseEntries, harvestSettlements, accounts, people, companies, cashMovements } from "@/db/schema";
+import { expenseEntries, harvests, harvestSettlements, accounts, people, companies, cashMovements } from "@/db/schema";
 
 export type ExpenseCategoryType =
   | "labor_harvest"
@@ -284,4 +287,90 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
   const weeks = [...byWeek.values()].sort((a, b) => (a.weekStartDate < b.weekStartDate ? 1 : -1));
 
   return { categories: CATEGORY_TYPES, weeks };
+}
+
+// ── Data Entry — week-bounded fetch ────────────────────────────────────
+// Used by the /expenses Data Entry tab to populate the form's "what's
+// already saved this week" preview. Returns expenses, cash movements, and
+// any harvest payment for the given Sunday-start week.
+
+export type WeekRowsBundle = {
+  weekStartDate: string;
+  expenses: ExpenseRow[];
+  cashMovements: Array<{
+    id: string;
+    direction: "in_to_ec" | "out_to_us";
+    amountUsd: string;
+    counterparty: string | null;
+    source: string | null;
+    transferDate: string;
+  }>;
+  harvestPayment: { id: string; netPayUsd: string; source: string | null } | null;
+};
+
+export async function getWeekRows(weekStartDate: string): Promise<WeekRowsBundle> {
+  const [exp, cm, harv] = await Promise.all([
+    db
+      .select({
+        id: expenseEntries.id,
+        entryDate: expenseEntries.entryDate,
+        weekStartDate: expenseEntries.weekStartDate,
+        categoryType: expenseEntries.categoryType,
+        categoryLabel: expenseEntries.categoryLabel,
+        amountUsd: expenseEntries.amountUsd,
+        payee: expenseEntries.payee,
+        payeePersonName: people.name,
+        payeeCompanyName: companies.name,
+        notes: expenseEntries.notes,
+        source: expenseEntries.source,
+        accountId: expenseEntries.accountId,
+      })
+      .from(expenseEntries)
+      .leftJoin(people, eq(people.id, expenseEntries.payeePersonId))
+      .leftJoin(companies, eq(companies.id, expenseEntries.payeeCompanyId))
+      .where(eq(expenseEntries.weekStartDate, weekStartDate))
+      .orderBy(expenseEntries.categoryType, expenseEntries.categoryLabel),
+    db
+      .select({
+        id: cashMovements.id,
+        direction: cashMovements.direction,
+        amountUsd: cashMovements.amountUsd,
+        counterparty: cashMovements.counterparty,
+        source: cashMovements.source,
+        transferDate: cashMovements.transferDate,
+      })
+      .from(cashMovements)
+      .where(eq(cashMovements.weekStartDate, weekStartDate)),
+    db
+      .select({
+        id: harvestSettlements.id,
+        netPayUsd: harvestSettlements.netPayUsd,
+        source: harvests.lotNumber,
+      })
+      .from(harvestSettlements)
+      .innerJoin(harvests, eq(harvests.id, harvestSettlements.harvestId))
+      .where(eq(harvests.weekStartDate, weekStartDate))
+      .limit(1),
+  ]);
+
+  return {
+    weekStartDate,
+    expenses: exp.map((r) => ({
+      ...r,
+      entryDate: dateStr(r.entryDate),
+      weekStartDate: dateStr(r.weekStartDate),
+      categoryType: r.categoryType as ExpenseCategoryType,
+    })),
+    cashMovements: cm.map((r) => ({
+      id: r.id,
+      direction: r.direction as "in_to_ec" | "out_to_us",
+      amountUsd: r.amountUsd,
+      counterparty: r.counterparty,
+      source: r.source,
+      transferDate: dateStr(r.transferDate),
+    })),
+    harvestPayment: harv[0]
+      ? { id: harv[0].id, netPayUsd: harv[0].netPayUsd, source: harv[0].source ?? null }
+      : null,
+  };
 }

@@ -2,21 +2,23 @@
 
 import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { weather, type Entity, type WeatherCond } from "@/lib/data";
+import type { Entity } from "@/lib/data";
 import { PitayaGlyph, Icon, EntityChip, type IconName } from "./icons";
 
 type Pillar = { id: string; label: string; icon: IconName; href: string };
 
+// Pillar order: items above Companies render first via slice(0, COMPANIES_INSERT),
+// Companies expandable group renders next, items below render last via slice(COMPANIES_INSERT).
+// Final shape (top → bottom): Home / Pending Items / Globe / Companies / Selling / Harvests / Expenses.
+const COMPANIES_INSERT = 3;
 const PILLARS: Pillar[] = [
-  { id: "home",      label: "Home",      icon: "home",   href: "/" },
-  { id: "todos",     label: "TODOs",     icon: "check",  href: "/todos" },
-  { id: "network",   label: "Network",   icon: "globe",  href: "/network" },
-  { id: "catalog",   label: "Catalog",   icon: "box",    href: "/catalog" },
-  { id: "harvests",  label: "Harvests",  icon: "leaf",   href: "/harvests" },
-  { id: "expenses",  label: "Expenses",  icon: "coin",   href: "/expenses" },
-  { id: "pricing",   label: "Pricing",   icon: "tag",    href: "/pricing" },
-  { id: "buyers",    label: "Buyers",    icon: "people", href: "/buyers" },
-  { id: "shipments", label: "Shipments", icon: "ship",   href: "/shipments" },
+  { id: "home",     label: "Home",          icon: "home",  href: "/" },
+  { id: "pending",  label: "Pending Items", icon: "check", href: "/pending" },
+  { id: "globe",    label: "Globe",         icon: "globe", href: "/globe" },
+  // — Companies group inserted here —
+  { id: "selling",  label: "Selling",       icon: "tag",   href: "/selling" },
+  { id: "harvests", label: "Harvests",      icon: "leaf",  href: "/harvests" },
+  { id: "expenses", label: "Expenses",      icon: "coin",  href: "/expenses" },
 ];
 
 export function Sidebar({ dense = false, entities }: { dense?: boolean; entities: Entity[] }) {
@@ -73,7 +75,7 @@ export function Sidebar({ dense = false, entities }: { dense?: boolean; entities
 
       <div>
         <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {PILLARS.slice(0, 2).map((p) => (
+          {PILLARS.slice(0, COMPANIES_INSERT).map((p) => (
             <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
           ))}
 
@@ -133,15 +135,13 @@ export function Sidebar({ dense = false, entities }: { dense?: boolean; entities
             </div>
           )}
 
-          {PILLARS.slice(2).map((p) => (
+          {PILLARS.slice(COMPANIES_INSERT).map((p) => (
             <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
           ))}
         </div>
       </div>
 
       <div style={{ flex: 1 }} />
-
-      <WeatherPanel />
     </aside>
   );
 }
@@ -174,50 +174,3 @@ function NavRow({ active, icon, label, onClick }: { active: boolean; icon: IconN
   );
 }
 
-function WeatherPanel() {
-  return (
-    <div style={{ padding: "10px 10px 6px", borderTop: "1px solid var(--line-soft)", display: "flex", flexDirection: "column", gap: 2 }}>
-      {weather.map((w) => (
-        <div
-          key={w.city}
-          style={{ display: "grid", gridTemplateColumns: "16px 1fr auto", gap: 8, alignItems: "center", padding: "6px 4px" }}
-        >
-          <WeatherGlyph cond={w.cond} />
-          <span style={{ display: "flex", flexDirection: "column", minWidth: 0, lineHeight: 1.2 }}>
-            <span style={{ fontSize: 11.5, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.city}</span>
-            <span className="mono" style={{ fontSize: 9.5, color: "var(--text-3)" }}>{w.region}</span>
-          </span>
-          <span className="mono num" style={{ fontSize: 12, color: "var(--text-0)", fontWeight: 500 }}>{w.tempF}°</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function WeatherGlyph({ cond }: { cond: WeatherCond }) {
-  const stroke = { stroke: "currentColor", strokeWidth: 1.4, fill: "none", strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-  if (cond === "sun") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: "var(--amber)" }}>
-        <circle cx="8" cy="8" r="3" {...stroke} />
-        <path d="M8 1 V3 M8 13 V15 M1 8 H3 M13 8 H15 M3 3 L4.5 4.5 M11.5 11.5 L13 13 M13 3 L11.5 4.5 M3 13 L4.5 11.5" {...stroke} />
-      </svg>
-    );
-  }
-  if (cond === "cloud") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: "var(--text-2)" }}>
-        <path d="M5 11 C3 11 2 9.5 2 8 C2 6.5 3.5 5 5 5 C5.5 3.5 7 2.5 8.5 2.5 C10.5 2.5 12 4 12 6 C13.5 6 14.5 7 14.5 8.5 C14.5 10 13.5 11 12 11 Z" {...stroke} />
-      </svg>
-    );
-  }
-  if (cond === "humid") {
-    return (
-      <svg width="14" height="14" viewBox="0 0 16 16" style={{ color: "var(--sky)" }}>
-        <path d="M5 9 C3 9 2 7.5 2 6 C2 4.5 3.5 3 5 3 C5.5 1.5 7 0.5 8.5 0.5 C10.5 0.5 12 2 12 4 C13.5 4 14.5 5 14.5 6.5 C14.5 8 13.5 9 12 9 Z" {...stroke} />
-        <path d="M5 12 L4 14 M8 12 L7 14 M11 12 L10 14" {...stroke} />
-      </svg>
-    );
-  }
-  return <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--text-3)" }} />;
-}

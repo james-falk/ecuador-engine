@@ -5,16 +5,29 @@
 import Link from "next/link";
 import { Topbar } from "@/components/design/topbar";
 import { ExpenseTabs } from "@/components/design/expense-tabs";
-import { getWeeklyGrid, getExpenseFeed } from "@/lib/queries/expenses";
+import { getWeeklyGrid, getExpenseFeed, getWeekRows } from "@/lib/queries/expenses";
 import { getCashMovementFeed } from "@/lib/queries/cash-movements";
 import { formatUsd } from "@/lib/money";
 
 const YEARS = [2022, 2023, 2024, 2025, 2026];
 
+type TabKey = "entry" | "view" | "feed" | "cash" | "insights";
+const VALID_TABS: TabKey[] = ["entry", "view", "feed", "cash", "insights"];
+
+// Sunday of the week containing today (UTC date math; the engine treats
+// dates as wall-clock anchored to Ecuador, but since week boundaries are
+// day-precision, UTC math is sufficient).
+function mostRecentSunday(): string {
+  const d = new Date();
+  const dow = d.getUTCDay();
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+}
+
 export default async function ExpensesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{ year?: string; tab?: string; week?: string }>;
 }) {
   const params = await searchParams;
   const requested = params.year;
@@ -26,10 +39,15 @@ export default async function ExpensesPage({
   })();
   const filters = year !== null ? { from: `${year}-01-01`, to: `${year}-12-31` } : {};
 
-  const [grid, feed, cashMovements] = await Promise.all([
+  const tab: TabKey = VALID_TABS.includes(params.tab as TabKey) ? (params.tab as TabKey) : "entry";
+  const weekParam =
+    params.week && /^\d{4}-\d{2}-\d{2}$/.test(params.week) ? params.week : mostRecentSunday();
+
+  const [grid, feed, cashMovements, weekBundle] = await Promise.all([
     getWeeklyGrid(filters),
     getExpenseFeed(filters),
     getCashMovementFeed(filters),
+    getWeekRows(weekParam),
   ]);
 
   // Header tallies — sum across the visible weeks.
@@ -73,7 +91,14 @@ export default async function ExpensesPage({
           </div>
           <YearPicker selected={isAll ? "all" : String(year)} />
 
-          <ExpenseTabs grid={grid} feed={feed} cashMovements={cashMovements} />
+          <ExpenseTabs
+            grid={grid}
+            feed={feed}
+            cashMovements={cashMovements}
+            weekBundle={weekBundle}
+            initialWeek={weekParam}
+            initialTab={tab}
+          />
         </div>
       </div>
     </div>

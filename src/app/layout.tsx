@@ -6,6 +6,7 @@ import { DrawerProvider } from "@/components/design/drawer";
 import { DrawerHost } from "@/components/design/drawer-host";
 import { getOwnedEntities } from "@/lib/queries/compliance";
 import { getDefaultAccountId } from "@/lib/queries/accounts";
+import { getTaskAssigneeOptions, getTaskCompanyOptions } from "@/lib/queries/tasks";
 import "./globals.css";
 
 const interTight = Inter_Tight({ subsets: ["latin"], variable: "--font-inter-tight", display: "swap" });
@@ -37,11 +38,15 @@ const themeBootScript = `
 `;
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Server-side: fetch the owned entities + default account once per render.
-  // Client components below receive these as plain props.
-  const [entities, defaultAccountId] = await Promise.all([
+  // Server-side: fetch the owned entities + default account + task picker
+  // options once per render. Client components below receive these as plain
+  // props (the task drawer, in particular, lives in DrawerHost and needs
+  // assignee/company dropdown data on first render of any page).
+  const [entities, defaultAccountId, taskAssignees, taskCompanies] = await Promise.all([
     getOwnedEntities(),
     getDefaultAccountId(),
+    getTaskAssigneeOptions(),
+    getTaskCompanyOptions(),
   ]);
 
   return (
@@ -59,7 +64,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               {children}
             </main>
           </div>
-          <DrawerHost defaultAccountId={defaultAccountId} />
+          <DrawerHost
+            defaultAccountId={defaultAccountId}
+            taskAssignees={taskAssignees}
+            taskCompanies={taskCompanies.map((c) => ({ id: c.id, name: c.name }))}
+          />
         </DrawerProvider>
       </body>
     </html>
