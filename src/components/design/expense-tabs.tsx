@@ -1,32 +1,29 @@
 "use client";
 
-// Client-side tab switcher for /expenses. Server fetches all datasets; this
-// component just toggles between tabs without a route round-trip. The
-// active tab persists in the URL (`?tab=entry|view|insights`) so refreshes
-// and shared links land on the right surface.
+// Client-side tab switcher for /expenses. Narrowed to the 3 tabs that are
+// actually about expenses (payments out): Data Entry, View, Feed.
+// US wires (capital movements) and Insights / KPIs left this page in
+// James's review pass — those belong on a future balance-sheet surface
+// alongside settlements and capital flow.
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { WeeklyGrid, ExpenseRow as ExpenseRowType, WeekRowsBundle } from "@/lib/queries/expenses";
-import type { CashMovementRow as CashMovementRowType } from "@/lib/queries/cash-movements";
 import { ExpenseGrid } from "./expense-grid";
 import { ExpenseFeed } from "./expense-feed";
-import { CashMovementFeed } from "./cash-movement-feed";
 import { ExpenseDataEntry } from "./expense-data-entry";
 
-type Tab = "entry" | "view" | "feed" | "cash" | "insights";
+type Tab = "entry" | "view" | "feed";
 
 export function ExpenseTabs({
   grid,
   feed,
-  cashMovements,
   weekBundle,
   initialWeek,
   initialTab,
 }: {
   grid: WeeklyGrid;
   feed: ExpenseRowType[];
-  cashMovements: CashMovementRowType[];
   weekBundle: WeekRowsBundle;
   initialWeek: string;
   initialTab: Tab;
@@ -60,8 +57,6 @@ export function ExpenseTabs({
             { id: "entry", label: "Data Entry" },
             { id: "view", label: "View" },
             { id: "feed", label: `Feed · ${feed.length}` },
-            { id: "cash", label: `US wires · ${cashMovements.length}` },
-            { id: "insights", label: "Insights" },
           ] as Array<{ id: Tab; label: string }>
         ).map((o) => (
           <button
@@ -87,21 +82,6 @@ export function ExpenseTabs({
       {tab === "entry" && <ExpenseDataEntry initialWeek={initialWeek} bundle={weekBundle} />}
       {tab === "view" && <ExpenseGrid grid={grid} />}
       {tab === "feed" && <ExpenseFeed rows={feed} />}
-      {tab === "cash" && <CashMovementFeed rows={cashMovements} />}
-      {tab === "insights" && (
-        <div
-          style={{
-            padding: "60px 20px",
-            textAlign: "center",
-            color: "var(--text-3)",
-            fontSize: 13,
-            border: "1px solid var(--line-soft)",
-            borderRadius: 10,
-          }}
-        >
-          Insights dashboard — coming next.
-        </div>
-      )}
     </div>
   );
 }

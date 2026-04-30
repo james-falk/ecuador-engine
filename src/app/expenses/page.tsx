@@ -1,22 +1,19 @@
-// /expenses — weekly grid + feed. Server component fetches both datasets;
-// the client tab switcher toggles between them. `?year=YYYY` (or `?year=all`)
-// filters all three feeds; default = current calendar year.
+// /expenses — narrow page that ONLY shows farm expenses (payments out).
+// Settlements / capital flow / KPI dashboards left this page in James's
+// review pass and will live on a future balance-sheet surface that pulls
+// from multiple pillars. Tabs: Data Entry, View, Feed.
 
 import Link from "next/link";
 import { Topbar } from "@/components/design/topbar";
 import { ExpenseTabs } from "@/components/design/expense-tabs";
 import { getWeeklyGrid, getExpenseFeed, getWeekRows } from "@/lib/queries/expenses";
-import { getCashMovementFeed } from "@/lib/queries/cash-movements";
 import { formatUsd } from "@/lib/money";
 
 const YEARS = [2022, 2023, 2024, 2025, 2026];
 
-type TabKey = "entry" | "view" | "feed" | "cash" | "insights";
-const VALID_TABS: TabKey[] = ["entry", "view", "feed", "cash", "insights"];
+type TabKey = "entry" | "view" | "feed";
+const VALID_TABS: TabKey[] = ["entry", "view", "feed"];
 
-// Sunday of the week containing today (UTC date math; the engine treats
-// dates as wall-clock anchored to Ecuador, but since week boundaries are
-// day-precision, UTC math is sufficient).
 function mostRecentSunday(): string {
   const d = new Date();
   const dow = d.getUTCDay();
@@ -43,25 +40,16 @@ export default async function ExpensesPage({
   const weekParam =
     params.week && /^\d{4}-\d{2}-\d{2}$/.test(params.week) ? params.week : mostRecentSunday();
 
-  const [grid, feed, cashMovements, weekBundle] = await Promise.all([
+  const [grid, feed, weekBundle] = await Promise.all([
     getWeeklyGrid(filters),
     getExpenseFeed(filters),
-    getCashMovementFeed(filters),
     getWeekRows(weekParam),
   ]);
 
-  // Header tallies — sum across the visible weeks.
+  // Single header stat: total expenses out for the selected scope. Net /
+  // settlements / capital flow happen on the (future) balance-sheet page.
   let grossTotal = 0;
-  let inTotal = 0;
-  let capitalInTotal = 0;
-  let capitalOutTotal = 0;
-  for (const w of grid.weeks) {
-    grossTotal += Number(w.gross);
-    inTotal += Number(w.settlementsIn);
-    capitalInTotal += Number(w.capitalIn);
-    capitalOutTotal += Number(w.capitalOut);
-  }
-  const netTotal = inTotal - grossTotal;
+  for (const w of grid.weeks) grossTotal += Number(w.gross);
   const scopeLabel = year !== null ? String(year) : "All years";
 
   return (
@@ -76,25 +64,22 @@ export default async function ExpensesPage({
       />
       <div style={{ flex: 1, overflow: "auto" }}>
         <div className="ee-page-pad" style={{ maxWidth: 1180, margin: "0 auto" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginBottom: 8, flexWrap: "wrap" }}>
-            <h1 style={{ font: "500 22px/1.1 var(--font-display)", letterSpacing: "-0.02em", margin: 0 }}>
-              Cash in &amp; out
-            </h1>
-            <Stat label="Gross out" value={formatUsd(grossTotal)} color="var(--text-2)" />
-            <Stat label="Settlements in" value={formatUsd(inTotal)} color="var(--green)" />
-            <Stat label="Operating net" value={formatUsd(netTotal)} color={netTotal >= 0 ? "var(--green)" : "var(--rose)"} bold />
-          </div>
           <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
-            <span className="label" style={{ color: "var(--text-3)" }}>Capital flow</span>
-            <Stat label="US in" value={formatUsd(capitalInTotal)} color="var(--sky)" />
-            <Stat label="US out" value={formatUsd(capitalOutTotal)} color="var(--amber)" />
+            <h1 style={{ font: "500 22px/1.1 var(--font-display)", letterSpacing: "-0.02em", margin: 0 }}>
+              Expenses
+            </h1>
+            <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+              <span className="label">Total</span>
+              <span className="mono num money-out" style={{ fontSize: 16, fontWeight: 500 }}>
+                {formatUsd(grossTotal)}
+              </span>
+            </span>
           </div>
           <YearPicker selected={isAll ? "all" : String(year)} />
 
           <ExpenseTabs
             grid={grid}
             feed={feed}
-            cashMovements={cashMovements}
             weekBundle={weekBundle}
             initialWeek={weekParam}
             initialTab={tab}
@@ -102,15 +87,6 @@ export default async function ExpensesPage({
         </div>
       </div>
     </div>
-  );
-}
-
-function Stat({ label, value, color, bold }: { label: string; value: string; color: string; bold?: boolean }) {
-  return (
-    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
-      <span className="label">{label}</span>
-      <span className="mono num" style={{ fontSize: 14, color, fontWeight: bold ? 600 : 500 }}>{value}</span>
-    </span>
   );
 }
 

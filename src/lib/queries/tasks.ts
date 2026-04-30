@@ -134,10 +134,20 @@ export async function getTaskTags(): Promise<string[]> {
 
 // All people / all companies for the filter dropdowns. Cheap full scans —
 // these tables are small and the page mounts infrequently.
+//
+// Internal-only filter: only James, Peter, Isaac use this app, so external
+// people (advisors, attorneys, accountants, vendor contacts) are filtered
+// out of assignee pickers. The internal trio carries roles `owner`,
+// `co_owner`, or `operator`. External names stay in the DB as references
+// (compliance evidence, harvest delivery slip names, etc.) but don't
+// pollute the assignee dropdown.
+const INTERNAL_ROLES = ["owner", "co_owner", "operator"] as const;
+
 export async function getTaskAssigneeOptions(): Promise<Array<{ id: string; name: string }>> {
   const rows = await db
     .select({ id: people.id, name: people.name })
     .from(people)
+    .where(inArray(people.role, INTERNAL_ROLES as unknown as (typeof people.role.enumValues)[number][]))
     .orderBy(asc(people.name));
   return rows;
 }

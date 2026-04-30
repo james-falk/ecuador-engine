@@ -2,8 +2,9 @@
 
 // Dotted, slowly-rotating globe. Canvas-based.
 // Land is sampled at every 2° by point-in-polygon against authored continent
-// outlines. Three pulsing pins (San Clemente / Miami / Garden City) and two
-// great-circle arcs (EC→MIA, MIA→MI) sweep across.
+// outlines. Three pulsing pins (San Clemente / Miami / Garden City) and a
+// single great-circle arc (EC→MIA) sweeps across — the actual export route.
+// (The MIA→MI arc was dropped because internal redistribution is downstream.)
 //
 // Modes:
 //   default (Home)        — autoRotate=true, interactive=false → pendulum around corridor
@@ -181,7 +182,6 @@ const PINS: Pin[] = [
 
 const ARCS = [
   { from: PINS[0], to: PINS[1], duration: 6.5, delay: 0 },
-  { from: PINS[1], to: PINS[2], duration: 4.0, delay: 3.2 },
 ];
 
 function lonLatToVec3(lon: number, lat: number): [number, number, number] {

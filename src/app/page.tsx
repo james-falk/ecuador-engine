@@ -1,45 +1,21 @@
-// /home — clean real-data dashboard. The previous version pulled mock todos /
-// pending / ops from src/lib/data.ts; that's all gone. Today the home shows:
-//   • current date stamp
-//   • a small set of real counters (compliance verified, harvest payments
-//     tracked, weeks of expense data)
-//   • a footer with route info + verified ratio
-//   • the decorative globe in the background
-//
-// Recent-activity feed is intentionally absent — it was mock and there's no
-// derivable activity stream yet. It'll come back when one of the pillars
-// emits real events.
+// /home — minimal real-data landing. Just date, brand line, nav links, and
+// the decorative globe. Counters were tried (compliance / harvest payments /
+// expense weeks) but didn't add operational value, so they're gone. Real
+// metrics belong on the pillar pages, not on the splash.
 
 import Link from "next/link";
-import { sql } from "drizzle-orm";
-import { db } from "@/db";
-import { getAllCompliance } from "@/lib/queries/compliance";
-import { getHarvestStats } from "@/lib/queries/harvests";
 import { Globe } from "@/components/design/globe";
 import { Icon } from "@/components/design/icons";
 
 const LINKS: Array<{ href: string; label: string; hint: string }> = [
   { href: "/pending", label: "Pending Items", hint: "what's open" },
-  { href: "/expenses", label: "Expenses", hint: "cash in & out" },
+  { href: "/expenses", label: "Expenses", hint: "weekly payments out" },
   { href: "/harvests", label: "Harvests", hint: "field → processor → payment" },
+  { href: "/companies", label: "Companies", hint: "Finca · PureSol · processors" },
   { href: "/globe", label: "Globe", hint: "the corridor" },
 ];
 
 export default async function HomePage() {
-  const [compliance, harvestStats, weeksRow] = await Promise.all([
-    getAllCompliance(),
-    getHarvestStats(),
-    db.execute<{ weeks: string }>(
-      sql`SELECT COUNT(DISTINCT week_start_date)::text AS weeks FROM expense_entries`
-    ),
-  ]);
-
-  const verifiedCount = compliance.filter((c) => c.status === "verified").length;
-  const totalCompliance = compliance.length;
-  const harvestCount = harvestStats.count;
-  const harvestPending = harvestStats.pendingCount;
-  const weeksTracked = parseInt(weeksRow.rows[0]?.weeks ?? "0", 10);
-
   return (
     <div style={{ flex: 1, overflow: "auto", display: "flex", justifyContent: "center", position: "relative" }}>
       <div
@@ -62,35 +38,6 @@ export default async function HomePage() {
         </h1>
         <div style={{ marginTop: 10, color: "var(--text-2)", fontSize: 13.5 }}>
           Internal operations · Finca del Dragón × PureSol Imports.
-        </div>
-
-        <div
-          style={{
-            marginTop: 40,
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-            gap: 1,
-            background: "var(--line-soft)",
-            border: "1px solid var(--line-soft)",
-            borderRadius: 10,
-            overflow: "hidden",
-          }}
-        >
-          <Counter
-            label="Compliance"
-            primary={`${verifiedCount}/${totalCompliance}`}
-            hint="verified"
-          />
-          <Counter
-            label="Harvest payments"
-            primary={String(harvestCount)}
-            hint={harvestPending > 0 ? `${harvestPending} awaiting PDF` : "all settled"}
-          />
-          <Counter
-            label="Expense weeks"
-            primary={String(weeksTracked)}
-            hint="tracked"
-          />
         </div>
 
         <div style={{ marginTop: 36, display: "flex", flexDirection: "column", gap: 0 }}>
@@ -124,30 +71,14 @@ export default async function HomePage() {
             marginTop: 64,
             paddingTop: 18,
             borderTop: "1px solid var(--line-soft)",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
             fontSize: 11,
             color: "var(--text-3)",
             fontFamily: "var(--font-mono)",
-            gap: 16,
-            flexWrap: "wrap",
           }}
         >
-          <span>GYE → MIA · ~5d at sea · 40′ FCL ≈ 960 cartons</span>
-          <span>{verifiedCount}/{totalCompliance} verified</span>
+          GYE → MIA · ~5d at sea · 40′ FCL ≈ 960 cartons
         </div>
       </div>
-    </div>
-  );
-}
-
-function Counter({ label, primary, hint }: { label: string; primary: string; hint: string }) {
-  return (
-    <div style={{ background: "var(--bg-1)", padding: "16px 18px", display: "flex", flexDirection: "column", gap: 4 }}>
-      <span className="label" style={{ color: "var(--text-3)" }}>{label}</span>
-      <span className="mono num" style={{ fontSize: 22, fontWeight: 500, color: "var(--text-0)" }}>{primary}</span>
-      <span style={{ fontSize: 11, color: "var(--text-3)" }}>{hint}</span>
     </div>
   );
 }

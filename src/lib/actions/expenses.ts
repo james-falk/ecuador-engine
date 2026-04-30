@@ -149,13 +149,22 @@ export type UpsertWeekInput = {
   chavito?: string;
   engineer?: string;
   isaac?: string;
+  // Optional free-text notes for the categories where they're useful
+  // (Water — vendor / delivery details; Jornales — crew breakdown like
+  // "3 workers × $12 × 5 days"). Stored in expense_entries.notes.
+  waterNote?: string;
+  jornalesNote?: string;
   // Free-form Other entries — each is an arbitrary label + amount.
   others?: Array<{ note: string; amountUsd: string }>;
-  // Capital flows. Counterparty is optional context.
+  // Capital flows. Counterparty is optional context. Currently NOT entered
+  // from the /expenses Data Entry tab (capital movements live on a separate
+  // surface coming later) but the action still accepts them so other
+  // surfaces can call it without a separate code path.
   capitalIn?: string;
   capitalOut?: string;
   counterparty?: string | null;
-  // Harvest payment received this week (lump-sum). Optional.
+  // Harvest payment received this week (lump-sum). Same caveat as capital
+  // flows — entered from the Harvests page, not /expenses.
   harvestPayment?: string;
 };
 
@@ -274,9 +283,23 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
   let expenseUpserts = 0;
   let expenseDeletes = 0;
 
-  // Apply expense upserts.
+  // Apply expense upserts. Water + Jornales also accept an optional free-text
+  // note (e.g. "3 workers × $12 × 5 days" for Jornales); other canonical
+  // slots ignore notes.
+  function noteForSlot(slot: string): string | null {
+    if (slot === "water") {
+      const t = (input.waterNote ?? "").trim();
+      return t || null;
+    }
+    if (slot === "jornales") {
+      const t = (input.jornalesNote ?? "").trim();
+      return t || null;
+    }
+    return null;
+  }
   for (const op of upsertOps) {
     const amountStr = op.amount.toFixed(2);
+    const slotNote = noteForSlot(op.slot);
     if (op.existingId) {
       await db
         .update(expenseEntries)
@@ -284,6 +307,7 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
           amountUsd: amountStr,
           entryDate,
           weekStartDate: weekStart,
+          notes: slotNote,
           source,
           lastTouchedAt: new Date(),
           updatedAt: new Date(),
@@ -298,6 +322,7 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
         amountUsd: amountStr,
         accountId: account.id,
         payee: op.label,
+        notes: slotNote,
         source,
         lastTouchedAt: new Date(),
       });
