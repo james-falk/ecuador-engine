@@ -1,30 +1,37 @@
 // One-shot ingest of the master "Finca Del Dragon" Drive sheet.
-// Reads a fixture .xlsx (export the Sheet via File → Download → Microsoft
-// Excel), parses each weekly row, and fans it out into:
-//   - expense_entries (one per non-zero category cell)
-//   - harvests + harvest_settlements (one per Harvest Payment Received cell)
-//
-// Idempotent: every row gets a unique `source = "master_sheet:row_N"` and
-// the script DELETEs everything with that source prefix at the start of each
-// run, then re-inserts. Safe to run repeatedly as the sheet evolves.
+// The sheet has a non-trivial layout: the "Weekly Payments" tab carries
+// MULTIPLE side-by-side sub-tables per year (the left side is the weekly
+// expense ledger; the right side has independent dated sub-tables for
+// capital wires in, capital wires out, harvest payments received, and ad-hoc
+// "other farm purchases"). The yearly section blocks repeat down the page,
+// and the column structure of the weekly table evolves over time (e.g. the
+// Isaac column appears in 2023 and the Pocho column becomes Pocho/Joe in
+// 2024). A single fixed-header parse cannot handle this — so this script is
+// section-aware: it scans for known section title cells anywhere on the
+// sheet, and for each one parses downward with section-specific logic.
 //
 // USAGE:
-//   1. Export the Drive sheet to scripts/data/master_sheet.xlsx
-//      (or set MASTER_SHEET_PATH env var)
+//   1. Drop a .xlsx export OR .csv export at scripts/data/master_sheet.{xlsx,csv}
+//      (or set MASTER_SHEET_PATH). The Drive MCP `get_drive_file_content` tool
+//      returns CSV directly, which is the easiest path.
 //   2. pnpm tsx scripts/ingest_master_sheet.ts [--dry-run] [--year=2025]
 //        --dry-run     parse + report but do not write
-//        --year=YYYY   filter to a single calendar year
+//        --year=YYYY   filter to a single calendar year (per ROW date, across
+//                      all sub-tables — so a 2024 wire that lives inside the
+//                      2025 section's right-hand table is correctly excluded)
 //
-// Column mapping is configurable below; if the sheet's column names change,
-// update COLUMN_MAP and re-run. The script fails LOUDLY if expected columns
-// are missing from the header row.
+// IDEMPOTENCY:
+//   Every inserted row carries a `source` like "master_sheet:<sub>:row_N".
+//   The script DELETEs all `source LIKE 'master_sheet:%'` rows before
+//   inserting. When a year filter is active, the deletion is scoped by
+//   weekStartDate to that year, so re-running 2025 doesn't wipe other years.
 
 import "./_env";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, extname } from "node:path";
 import * as XLSX from "xlsx";
 import { startOfWeek, parseISO, format, isValid, parse as parseDate } from "date-fns";
-import { eq, like, and, gte, lte, sql as drizzleSql } from "drizzle-orm";
+import { eq, like, and, gte, lte } from "drizzle-orm";
 import { db } from "../src/db";
 import {
   accounts,
@@ -39,16 +46,18 @@ import type { CashMovementDirection } from "../src/lib/queries/cash-movements";
 
 // ── Config ────────────────────────────────────────────────────────────
 
-const SHEET_PATH = process.env.MASTER_SHEET_PATH ?? resolve("scripts/data/master_sheet.xlsx");
-const SHEET_NAME = "Weekly Payments"; // only tab in the master sheet
+const SHEET_PATH = (() => {
+  if (process.env.MASTER_SHEET_PATH) return resolve(process.env.MASTER_SHEET_PATH);
+  const csv = resolve("scripts/data/master_sheet.csv");
+  if (existsSync(csv)) return csv;
+  return resolve("scripts/data/master_sheet.xlsx");
+})();
+const SHEET_TAB_NAME = "Weekly Payments"; // when reading xlsx; CSV is single-tab
 const SOURCE_PREFIX = "master_sheet:";
 const ACCOUNT_SLUG = "finca-ec";
 const PROCESSOR_NAME = "INCALPACK"; // default processor for backfill harvests
 const DRY_RUN = process.argv.includes("--dry-run");
 
-// `--year=2025` filters to rows whose entry_date falls in that year.
-// Used to ingest one year at a time so you can cross-reference totals
-// against known annual figures before doing the full historical pull.
 const YEAR_FILTER: number | null = (() => {
   const arg = process.argv.find((a) => a.startsWith("--year="));
   if (!arg) return null;
@@ -56,111 +65,74 @@ const YEAR_FILTER: number | null = (() => {
   return Number.isFinite(y) ? y : null;
 })();
 
-// Header column → DB category/flow mapping. KEYS are how the columns appear in
-// the spreadsheet (case-insensitive, trimmed). When a column doesn't appear in
-// this map, it's logged as "skipped" and ignored. Extend as new columns
-// are discovered in the master sheet.
-//
-// Kinds:
-//   expense     — emit as expense_entries row (category_type + label)
-//   income      — emit as harvests + harvest_settlements (lump-sum net pay)
-//   capital_in  — emit as cash_movements direction='in_to_ec' (US → EC wire)
-//   capital_out — emit as cash_movements direction='out_to_us' (EC → US wire)
-//   other_note  — sentinel for the "Other" column-pair (note + cost). Handled
-//                 specially below: the note text becomes category_label.
-type ColumnDef =
-  | { kind: "expense"; category: ExpenseCategoryType; label: string }
-  | { kind: "income" }
-  | { kind: "capital_in" }
-  | { kind: "capital_out" }
-  | { kind: "other_note" };
+// ── Section detection ─────────────────────────────────────────────────
 
-const COLUMN_MAP: Record<string, ColumnDef> = {
-  // Operating bills
-  "water": { kind: "expense", category: "operating_bills", label: "Water deliveries" },
+// Title strings that mark the start of a sub-table. Matched against trimmed,
+// lower-cased cell text (so trailing spaces and case are forgiven).
+const SECTION_TITLES = {
+  weekly_expenses: ["amounts paid by isaac to workers"],
+  capital_in: ["amounts paid to isaac to pay workers"],
+  capital_out: ["payments sent back to us"],
+  harvest_income: ["harvest payments recieved", "harvest payments received"], // both spellings
+  other_purchases: ["other farm purchases"],
+} as const;
 
-  // Labor (recurring fixed)
-  "chavito": { kind: "expense", category: "labor_overhead", label: "Chavito" },
-  "pocho": { kind: "expense", category: "labor_overhead", label: "Engineer" },
-  "joe": { kind: "expense", category: "labor_overhead", label: "Engineer" },
-  "pocho/joe": { kind: "expense", category: "labor_overhead", label: "Engineer" },
-  "engineer": { kind: "expense", category: "labor_overhead", label: "Engineer" },
-  "isaac": { kind: "expense", category: "labor_overhead", label: "Isaac" },
+type SectionKind = keyof typeof SECTION_TITLES;
 
-  // Day labor
-  "jornales": { kind: "expense", category: "labor_harvest", label: "Jornales" },
+type SectionStart = { kind: SectionKind; titleRow: number; titleCol: number };
 
-  // Income
-  "harvest payment received": { kind: "income" },
-
-  // Capital flows (the "Amounts Paid to Isaac to Pay Workers" + "Payments Sent
-  // Back to US" columns from James's sheet — different sheets may name these
-  // slightly differently; common variants below).
-  "amounts paid to isaac to pay workers": { kind: "capital_in" },
-  "amounts paid to isaac": { kind: "capital_in" },
-  "wires to isaac": { kind: "capital_in" },
-  "payments sent back to us": { kind: "capital_out" },
-  "wires from isaac": { kind: "capital_out" },
-
-  // Other column header — the cost cell. The matching note column is detected
-  // adjacent to this and merged in `parseRow` below.
-  "other": { kind: "other_note" },
-};
-
-// Columns that are known headers but NOT data (date, totals, comments, etc.).
-// These are silently ignored — no warning logged.
-const IGNORED_COLUMNS = new Set([
-  "date", "week", "week #", "week of", "total", "gross", "net",
-  "comments", "comment", "notes", "note",
-]);
-
-// ── Types ─────────────────────────────────────────────────────────────
-
-type ParsedRow = {
-  rowIndex: number; // 1-based row number in the sheet (for source string)
-  weekStartDate: string; // ISO YYYY-MM-DD (Monday)
-  cells: Array<{ column: string; amountUsd: string }>;
-};
-
-type IngestReport = {
-  rowsRead: number;
-  rowsParsed: number;
-  rowsSkipped: number;
-  expensesInserted: number;
-  harvestsInserted: number;
-  cashMovementsInserted: number;
-  unknownColumns: Set<string>;
-  errors: Array<{ row: number; reason: string }>;
-};
+function detectSections(rows: unknown[][]): SectionStart[] {
+  const sections: SectionStart[] = [];
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    for (let c = 0; c < row.length; c++) {
+      const cell = String(row[c] ?? "").trim().toLowerCase();
+      if (!cell) continue;
+      for (const [kind, titles] of Object.entries(SECTION_TITLES)) {
+        if (titles.some((t) => cell === t)) {
+          sections.push({ kind: kind as SectionKind, titleRow: r, titleCol: c });
+        }
+      }
+    }
+  }
+  return sections;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────
 
-function normalize(s: string): string {
-  return s.trim().toLowerCase();
+function normalize(s: unknown): string {
+  return String(s ?? "").trim().toLowerCase();
 }
 
 function parseDateCell(value: unknown): string | null {
   if (value === null || value === undefined || value === "") return null;
-  // xlsx may parse dates as JS Date or as numeric serial. Handle both.
   if (value instanceof Date) {
     if (!isValid(value)) return null;
     return format(value, "yyyy-MM-dd");
   }
   if (typeof value === "number") {
-    // Excel serial date (days since 1900-01-01 with Lotus 1-2-3 quirk)
     const d = XLSX.SSF.parse_date_code(value);
     if (!d) return null;
     return `${String(d.y).padStart(4, "0")}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
-    // Try ISO first
+    if (!trimmed) return null;
     const iso = parseISO(trimmed);
-    if (isValid(iso)) return format(iso, "yyyy-MM-dd");
-    // Try common formats
-    for (const fmt of ["MM/dd/yyyy", "M/d/yyyy", "yyyy-MM-dd", "dd-MMM-yyyy"]) {
+    if (isValid(iso) && /^\d{4}-\d{2}-\d{2}/.test(trimmed)) return format(iso, "yyyy-MM-dd");
+    // Sheet uses "MM-DD-YYYY" hyphenated; XLSX auto-formats CSV cells to
+    // "M/d/yy" on read (so "01-04-2025" becomes "1/4/25"). Pre-expand 2-digit
+    // years to 4-digit since date-fns parses "yy" literally as years 0-99.
+    // The farm's data starts in 2022, so any 2-digit year maps to 20YY.
+    const expanded = trimmed.replace(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/, "$1/$2/20$3");
+    for (const fmt of [
+      "MM-dd-yyyy", "M-d-yyyy",
+      "MM/dd/yyyy", "M/d/yyyy",
+      "dd-MMM-yyyy",
+    ]) {
       try {
-        const d = parseDate(trimmed, fmt, new Date());
+        const d = parseDate(expanded, fmt, new Date());
         if (isValid(d)) return format(d, "yyyy-MM-dd");
       } catch {
         // try next
@@ -177,8 +149,11 @@ function parseAmount(value: unknown): string | null {
     return value.toFixed(2);
   }
   if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
     // Strip $, commas, spaces; allow negatives in parens "($150)"
-    const cleaned = value.replace(/[$,\s]/g, "").replace(/^\((.+)\)$/, "-$1");
+    const cleaned = trimmed.replace(/[$,\s]/g, "").replace(/^\((.+)\)$/, "-$1");
+    if (cleaned === "" || cleaned === "-") return null;
     const n = Number(cleaned);
     if (!Number.isFinite(n) || n === 0) return null;
     return n.toFixed(2);
@@ -186,127 +161,497 @@ function parseAmount(value: unknown): string | null {
   return null;
 }
 
+function sundayOf(isoDate: string): string {
+  return format(startOfWeek(parseISO(isoDate), { weekStartsOn: 0 }), "yyyy-MM-dd");
+}
+
+function inYearFilter(isoDate: string): boolean {
+  if (YEAR_FILTER === null) return true;
+  return parseInt(isoDate.slice(0, 4), 10) === YEAR_FILTER;
+}
+
+// ── Section parsers ───────────────────────────────────────────────────
+
+// Each parser returns one or more parsed records. Records are kind-tagged
+// and converted to DB rows in the writer step.
+
+type ExpenseRecord = {
+  kind: "expense";
+  rowIndex: number; // 1-based sheet row for source string
+  subSection: "weekly" | "other";
+  entryDate: string; // ISO
+  weekStartDate: string;
+  categoryType: ExpenseCategoryType;
+  categoryLabel: string;
+  amountUsd: string;
+  payee: string | null;
+  notes: string | null;
+};
+
+type HarvestIncomeRecord = {
+  kind: "harvest_income";
+  rowIndex: number;
+  date: string;
+  weekStartDate: string;
+  amountUsd: string;
+};
+
+type CashMovementRecord = {
+  kind: "cash_movement";
+  rowIndex: number;
+  direction: CashMovementDirection;
+  date: string;
+  weekStartDate: string;
+  amountUsd: string;
+  notes: string | null;
+};
+
+type ParsedRecord = ExpenseRecord | HarvestIncomeRecord | CashMovementRecord;
+
+// Weekly expense column → category metadata. Headers are case-insensitive.
+const WEEKLY_COLUMN_MAP: Record<
+  string,
+  { category: ExpenseCategoryType; label: string }
+> = {
+  water: { category: "operating_bills", label: "Water deliveries" },
+  jornales: { category: "labor_harvest", label: "Jornales" },
+  chavito: { category: "labor_overhead", label: "Chavito" },
+  pocho: { category: "labor_overhead", label: "Engineer" },
+  joe: { category: "labor_overhead", label: "Engineer" },
+  "pocho/joe": { category: "labor_overhead", label: "Engineer" },
+  engineer: { category: "labor_overhead", label: "Engineer" },
+  isaac: { category: "labor_overhead", label: "Isaac" },
+};
+
+// Weekly headers we explicitly skip (totals + structural).
+const WEEKLY_IGNORED_HEADERS = new Set([
+  "date",
+  "weekly total",
+  "total",
+  "totals",
+  "",
+]);
+
+// Returns `true` for any col-B value that should NOT be treated as a weekly
+// data row (totals, year labels, blank).
+function isWeeklyTerminator(value: unknown): boolean {
+  const v = normalize(value);
+  if (!v) return true;
+  if (v === "totals") return true;
+  if (v === "total") return true;
+  if (/total/i.test(String(value))) return true; // "January Totals", "2025 Total", "Gross", "Net"
+  if (/^\d{4}$/.test(v)) return true; // year label like "2024"
+  // Any of the section title strings appearing in col B → bail
+  for (const titles of Object.values(SECTION_TITLES)) {
+    if (titles.includes(v as never)) return true;
+  }
+  return false;
+}
+
+function parseWeeklySection(
+  rows: unknown[][],
+  start: SectionStart,
+  sections: SectionStart[]
+): { records: ParsedRecord[]; errors: Array<{ row: number; reason: string }>; unknownHeaders: string[] } {
+  const errors: Array<{ row: number; reason: string }> = [];
+  const records: ParsedRecord[] = [];
+  const unknownHeaders: string[] = [];
+
+  // Header row is the row immediately after the title.
+  const headerRowIdx = start.titleRow + 1;
+  const headerRow = rows[headerRowIdx] ?? [];
+
+  // Locate "Date" column at-or-after start.titleCol — this is where the
+  // weekly table's date column lives. The category columns extend from
+  // there until the next section's title column, or until the row ends.
+  const dateCol = (() => {
+    for (let c = start.titleCol; c < headerRow.length; c++) {
+      if (normalize(headerRow[c]) === "date") return c;
+    }
+    return -1;
+  })();
+  if (dateCol === -1) {
+    errors.push({ row: headerRowIdx + 1, reason: "Weekly section: no Date column found in header row" });
+    return { records, errors, unknownHeaders };
+  }
+
+  // Build header → column map for THIS section. The category columns sit
+  // between dateCol+1 and the next non-data marker. Ignore columns past
+  // the section's right edge (where another sub-table starts).
+  const rightEdgeCol = (() => {
+    // Earliest title col of any OTHER section that's on the same row band
+    // and to the right of this title. Use a conservative window: all
+    // sections within +/- 50 rows of this section's title.
+    const others = sections.filter(
+      (s) => s !== start && Math.abs(s.titleRow - start.titleRow) < 50 && s.titleCol > start.titleCol
+    );
+    if (others.length === 0) return headerRow.length;
+    return Math.min(...others.map((s) => s.titleCol));
+  })();
+
+  // Assemble category columns. Track the "Other" note column position so we
+  // can pair it with the adjacent unlabeled amount column.
+  type CatCol =
+    | { kind: "category"; col: number; category: ExpenseCategoryType; label: string }
+    | { kind: "other_note"; noteCol: number; amountCol: number };
+  const catCols: CatCol[] = [];
+  let c = dateCol + 1;
+  while (c < rightEdgeCol) {
+    const h = normalize(headerRow[c]);
+    if (WEEKLY_IGNORED_HEADERS.has(h)) {
+      c++;
+      continue;
+    }
+    if (h === "other") {
+      // The amount cell is in the very next column (unlabeled in the header).
+      catCols.push({ kind: "other_note", noteCol: c, amountCol: c + 1 });
+      c += 2;
+      continue;
+    }
+    const def = WEEKLY_COLUMN_MAP[h];
+    if (def) {
+      catCols.push({ kind: "category", col: c, category: def.category, label: def.label });
+      c++;
+      continue;
+    }
+    unknownHeaders.push(h);
+    c++;
+  }
+
+  // Walk data rows from headerRow+1 downward. Stop when we hit another
+  // weekly_expenses section (same kind, different titleRow) or pass the
+  // last row of the sheet.
+  const nextWeeklyTitleRow =
+    sections
+      .filter((s) => s.kind === "weekly_expenses" && s.titleRow > start.titleRow)
+      .map((s) => s.titleRow)
+      .sort((a, b) => a - b)[0] ?? rows.length;
+
+  for (let r = headerRowIdx + 1; r < nextWeeklyTitleRow; r++) {
+    const row = rows[r] ?? [];
+    const dateCell = row[dateCol];
+    if (isWeeklyTerminator(dateCell)) continue;
+    const iso = parseDateCell(dateCell);
+    if (!iso) {
+      if (typeof dateCell === "string" && /\d/.test(dateCell)) {
+        errors.push({ row: r + 1, reason: `Weekly: could not parse date '${dateCell}'` });
+      }
+      continue;
+    }
+    if (!inYearFilter(iso)) continue;
+    const week = sundayOf(iso);
+
+    for (const cc of catCols) {
+      if (cc.kind === "category") {
+        const amt = parseAmount(row[cc.col]);
+        if (!amt) continue;
+        records.push({
+          kind: "expense",
+          rowIndex: r + 1,
+          subSection: "weekly",
+          entryDate: iso,
+          weekStartDate: week,
+          categoryType: cc.category,
+          categoryLabel: cc.label,
+          amountUsd: amt,
+          payee: cc.label,
+          notes: null,
+        });
+      } else {
+        // other_note pair
+        const note = String(row[cc.noteCol] ?? "").trim();
+        const amt = parseAmount(row[cc.amountCol]);
+        if (!amt) continue;
+        records.push({
+          kind: "expense",
+          rowIndex: r + 1,
+          subSection: "weekly",
+          entryDate: iso,
+          weekStartDate: week,
+          categoryType: "other",
+          categoryLabel: note || "Other",
+          amountUsd: amt,
+          payee: null,
+          notes: note || null,
+        });
+      }
+    }
+  }
+
+  return { records, errors, unknownHeaders };
+}
+
+// Two-column sub-tables: capital_in / capital_out / harvest_income / other_purchases.
+// Title row is at start.titleRow, col=titleCol.
+// Header row is at titleRow+1 with "Date" / "Amount" (and sometimes a third
+// description column to the right).
+function parseTwoColSection(
+  rows: unknown[][],
+  start: SectionStart
+): { records: ParsedRecord[]; errors: Array<{ row: number; reason: string }> } {
+  const errors: Array<{ row: number; reason: string }> = [];
+  const records: ParsedRecord[] = [];
+
+  const headerRowIdx = start.titleRow + 1;
+  const headerRow = rows[headerRowIdx] ?? [];
+  const dateCol = (() => {
+    for (let c = start.titleCol; c < Math.min(start.titleCol + 6, headerRow.length); c++) {
+      if (normalize(headerRow[c]) === "date") return c;
+    }
+    return -1;
+  })();
+  if (dateCol === -1) {
+    errors.push({
+      row: headerRowIdx + 1,
+      reason: `${start.kind}: no Date column found in header row at col ${start.titleCol}`,
+    });
+    return { records, errors };
+  }
+  const amountCol = (() => {
+    for (let c = dateCol + 1; c < Math.min(dateCol + 4, headerRow.length); c++) {
+      if (normalize(headerRow[c]) === "amount") return c;
+    }
+    return -1;
+  })();
+  if (amountCol === -1) {
+    errors.push({
+      row: headerRowIdx + 1,
+      reason: `${start.kind}: no Amount column found after date col ${dateCol}`,
+    });
+    return { records, errors };
+  }
+  // Optional description: the column right after Amount when there's a free-text
+  // note column (e.g., the 2025 capital_in section has a description col).
+  const descCol = amountCol + 1 < headerRow.length ? amountCol + 1 : -1;
+
+  // Walk down. Stop when we hit "Total"/"Totals" in dateCol (table footer)
+  // OR encounter a row that's empty in BOTH dateCol and amountCol AND has
+  // an empty next-row-too (i.e., truly past the table).
+  let consecutiveEmpty = 0;
+  for (let r = headerRowIdx + 1; r < rows.length; r++) {
+    const row = rows[r] ?? [];
+    const dCell = row[dateCol];
+    const aCell = row[amountCol];
+    const dNorm = normalize(dCell);
+    if (dNorm === "total" || dNorm === "totals") break;
+
+    // Some sub-tables put their data on rows that ALSO carry weekly-section
+    // data on the left. We just look at our own columns.
+    if ((dCell === null || dCell === undefined || dCell === "") && (aCell === null || aCell === undefined || aCell === "")) {
+      consecutiveEmpty++;
+      // Bail after a few empties — we've left the table.
+      if (consecutiveEmpty >= 6) break;
+      continue;
+    }
+    consecutiveEmpty = 0;
+
+    const iso = parseDateCell(dCell);
+    if (!iso) {
+      // Description-only rows (e.g. "Lights and Buckets" with no date) are
+      // skipped silently — they're cosmetic in the source sheet.
+      continue;
+    }
+    const amt = parseAmount(aCell);
+    if (!amt) continue;
+    if (!inYearFilter(iso)) continue;
+
+    const week = sundayOf(iso);
+    const note = descCol >= 0 ? String(row[descCol] ?? "").trim() : "";
+
+    if (start.kind === "harvest_income") {
+      records.push({ kind: "harvest_income", rowIndex: r + 1, date: iso, weekStartDate: week, amountUsd: amt });
+    } else if (start.kind === "capital_in" || start.kind === "capital_out") {
+      records.push({
+        kind: "cash_movement",
+        rowIndex: r + 1,
+        direction: start.kind === "capital_in" ? "in_to_ec" : "out_to_us",
+        date: iso,
+        weekStartDate: week,
+        amountUsd: amt,
+        notes: note || null,
+      });
+    } else if (start.kind === "other_purchases") {
+      // The "Other Farm Purchases" sub-table puts the purchase description
+      // on the ROW BELOW the date+amount, in the same column as Amount
+      // (not on the same row in a descCol). Peek forward and use that text
+      // as the label when present.
+      let belowNote = "";
+      const next = rows[r + 1] ?? [];
+      const nextDate = next[dateCol];
+      const nextAmount = next[amountCol];
+      const nextDateEmpty = nextDate === null || nextDate === undefined || nextDate === "";
+      if (nextDateEmpty && typeof nextAmount === "string" && parseAmount(nextAmount) === null) {
+        belowNote = nextAmount.trim();
+      }
+      const label = belowNote || note || "Other farm purchase";
+      records.push({
+        kind: "expense",
+        rowIndex: r + 1,
+        subSection: "other",
+        entryDate: iso,
+        weekStartDate: week,
+        categoryType: "other",
+        categoryLabel: label,
+        amountUsd: amt,
+        payee: null,
+        notes: label,
+      });
+    }
+  }
+
+  return { records, errors };
+}
+
 // ── Main ──────────────────────────────────────────────────────────────
 
-async function main() {
+function loadRows(): unknown[][] {
   if (!existsSync(SHEET_PATH)) {
     console.error(`Master sheet not found at: ${SHEET_PATH}`);
-    console.error(`Set MASTER_SHEET_PATH or drop the export at scripts/data/master_sheet.xlsx`);
+    console.error(`Set MASTER_SHEET_PATH or drop the export at scripts/data/master_sheet.{xlsx,csv}`);
     process.exit(1);
   }
-
   console.log(`Reading: ${SHEET_PATH}`);
-  if (YEAR_FILTER !== null) console.log(`Year filter: ${YEAR_FILTER}`);
-  if (DRY_RUN) console.log(`Mode: DRY RUN (no DB writes)`);
+  const ext = extname(SHEET_PATH).toLowerCase();
   const buf = readFileSync(SHEET_PATH);
-  const wb = XLSX.read(buf, { type: "buffer", cellDates: true });
-
-  const sheet = wb.Sheets[SHEET_NAME] ?? wb.Sheets[wb.SheetNames[0]];
+  let wb: XLSX.WorkBook;
+  if (ext === ".csv") {
+    wb = XLSX.read(buf.toString("utf8"), { type: "string", cellDates: true });
+  } else {
+    wb = XLSX.read(buf, { type: "buffer", cellDates: true });
+  }
+  const sheet = wb.Sheets[SHEET_TAB_NAME] ?? wb.Sheets[wb.SheetNames[0]];
   if (!sheet) {
-    console.error(`No sheet named "${SHEET_NAME}" found. Available: ${wb.SheetNames.join(", ")}`);
+    console.error(`No sheet found. Available: ${wb.SheetNames.join(", ")}`);
     process.exit(1);
   }
-  console.log(`Using sheet: ${sheet["!ref"] ? wb.SheetNames[0] : "(unnamed)"}`);
+  return XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+}
 
-  // Convert to array-of-arrays so we have full control over header detection.
-  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: null, raw: false });
+async function main() {
+  const rows = loadRows();
   if (rows.length === 0) {
     console.error("Sheet is empty.");
     process.exit(1);
   }
+  if (YEAR_FILTER !== null) console.log(`Year filter: ${YEAR_FILTER}`);
+  if (DRY_RUN) console.log(`Mode: DRY RUN (no DB writes)`);
 
-  // Find the header row — the first row that has a "date" column.
-  let headerRowIndex = -1;
-  for (let i = 0; i < Math.min(rows.length, 20); i++) {
-    const r = rows[i];
-    if (Array.isArray(r) && r.some((c) => typeof c === "string" && normalize(c) === "date")) {
-      headerRowIndex = i;
-      break;
-    }
+  const sections = detectSections(rows);
+  console.log(`Detected ${sections.length} sub-table sections:`);
+  for (const s of sections) {
+    console.log(`  - ${s.kind} @ row ${s.titleRow + 1}, col ${s.titleCol}`);
   }
-  if (headerRowIndex === -1) {
-    console.error("Could not locate header row (no 'Date' column found in first 20 rows).");
-    process.exit(1);
-  }
-  const headers = (rows[headerRowIndex] as unknown[]).map((c) =>
-    typeof c === "string" ? normalize(c) : ""
-  );
-  console.log(`Header row: ${headerRowIndex + 1}`);
-  console.log(`Columns: ${headers.filter(Boolean).join(", ")}`);
 
-  // Parse each data row.
-  const report: IngestReport = {
-    rowsRead: 0,
-    rowsParsed: 0,
-    rowsSkipped: 0,
-    expensesInserted: 0,
-    harvestsInserted: 0,
-    cashMovementsInserted: 0,
-    unknownColumns: new Set(),
-    errors: [],
+  const allRecords: ParsedRecord[] = [];
+  const allErrors: Array<{ row: number; reason: string }> = [];
+  const allUnknownHeaders = new Set<string>();
+  const sectionsTouched: Record<SectionKind, number> = {
+    weekly_expenses: 0,
+    capital_in: 0,
+    capital_out: 0,
+    harvest_income: 0,
+    other_purchases: 0,
   };
 
-  const parsed: ParsedRow[] = [];
-  for (let i = headerRowIndex + 1; i < rows.length; i++) {
-    report.rowsRead++;
-    const r = rows[i] as unknown[];
-    if (!r || r.every((c) => c === null || c === "" || c === undefined)) continue;
-
-    const dateValue = r[headers.indexOf("date")];
-    const isoDate = parseDateCell(dateValue);
-    if (!isoDate) {
-      report.rowsSkipped++;
-      report.errors.push({ row: i + 1, reason: `Could not parse date: ${dateValue}` });
-      continue;
-    }
-    // Year filter — when set, skip rows outside the requested year. Cheap
-    // string check rather than reparsing.
-    if (YEAR_FILTER !== null) {
-      const rowYear = parseInt(isoDate.slice(0, 4), 10);
-      if (rowYear !== YEAR_FILTER) {
-        report.rowsSkipped++;
-        continue;
-      }
-    }
-    // Sunday of the week containing the date. Master sheet runs Sun→Sat with
-    // payments on Saturday, so the canonical weekStartDate is Sunday.
-    const weekStartDate = format(startOfWeek(parseISO(isoDate), { weekStartsOn: 0 }), "yyyy-MM-dd");
-
-    const cells: ParsedRow["cells"] = [];
-    for (let c = 0; c < headers.length; c++) {
-      const h = headers[c];
-      if (!h || h === "date" || IGNORED_COLUMNS.has(h)) continue;
-      const amount = parseAmount(r[c]);
-      if (!amount) continue;
-      if (!COLUMN_MAP[h]) {
-        report.unknownColumns.add(h);
-        continue;
-      }
-      cells.push({ column: h, amountUsd: amount });
-    }
-
-    if (cells.length > 0) {
-      parsed.push({ rowIndex: i + 1, weekStartDate, cells });
-      report.rowsParsed++;
+  for (const s of sections) {
+    if (s.kind === "weekly_expenses") {
+      const { records, errors, unknownHeaders } = parseWeeklySection(rows, s, sections);
+      allRecords.push(...records);
+      allErrors.push(...errors);
+      unknownHeaders.forEach((h) => allUnknownHeaders.add(h));
+      sectionsTouched.weekly_expenses += records.length > 0 ? 1 : 0;
     } else {
-      report.rowsSkipped++;
+      const { records, errors } = parseTwoColSection(rows, s);
+      allRecords.push(...records);
+      allErrors.push(...errors);
+      sectionsTouched[s.kind] += records.length > 0 ? 1 : 0;
     }
   }
 
-  console.log(`Parsed ${report.rowsParsed} rows (${report.rowsRead} read, ${report.rowsSkipped} skipped).`);
-  if (report.unknownColumns.size > 0) {
-    console.log(`Unknown columns (extend COLUMN_MAP): ${[...report.unknownColumns].join(", ")}`);
+  // Tally records by kind for the report.
+  const tallies = {
+    weeklyExpense: 0,
+    otherExpense: 0,
+    harvestIncome: 0,
+    capitalIn: 0,
+    capitalOut: 0,
+  };
+  for (const rec of allRecords) {
+    if (rec.kind === "expense") {
+      if (rec.subSection === "weekly") tallies.weeklyExpense++;
+      else tallies.otherExpense++;
+    } else if (rec.kind === "harvest_income") tallies.harvestIncome++;
+    else if (rec.kind === "cash_movement") {
+      if (rec.direction === "in_to_ec") tallies.capitalIn++;
+      else tallies.capitalOut++;
+    }
+  }
+
+  console.log(`\nParsed records:`);
+  console.log(`  weekly expense rows:    ${tallies.weeklyExpense}`);
+  console.log(`  other-purchase expenses:${tallies.otherExpense}`);
+  console.log(`  harvest income rows:    ${tallies.harvestIncome}`);
+  console.log(`  capital_in cash movs:   ${tallies.capitalIn}`);
+  console.log(`  capital_out cash movs:  ${tallies.capitalOut}`);
+
+  // Sums for cross-reference against the sheet's printed totals.
+  const sum = (rs: ParsedRecord[], pred: (r: ParsedRecord) => boolean) =>
+    rs.filter(pred).reduce((acc, r) => acc + parseFloat((r as { amountUsd: string }).amountUsd), 0);
+  const totals = {
+    weeklyExpenseUsd: sum(allRecords, (r) => r.kind === "expense" && r.subSection === "weekly"),
+    otherExpenseUsd: sum(allRecords, (r) => r.kind === "expense" && r.subSection === "other"),
+    harvestIncomeUsd: sum(allRecords, (r) => r.kind === "harvest_income"),
+    capitalInUsd: sum(allRecords, (r) => r.kind === "cash_movement" && r.direction === "in_to_ec"),
+    capitalOutUsd: sum(allRecords, (r) => r.kind === "cash_movement" && r.direction === "out_to_us"),
+  };
+  console.log(`\nTotals (USD):`);
+  console.log(`  weekly expenses:        $${totals.weeklyExpenseUsd.toFixed(2)}`);
+  console.log(`  other-purchase expenses:$${totals.otherExpenseUsd.toFixed(2)}`);
+  console.log(`  harvest income:         $${totals.harvestIncomeUsd.toFixed(2)}`);
+  console.log(`  capital_in (US→EC):     $${totals.capitalInUsd.toFixed(2)}`);
+  console.log(`  capital_out (EC→US):    $${totals.capitalOutUsd.toFixed(2)}`);
+
+  // Per-category breakdown of weekly expenses, for cross-checking against
+  // the sheet's "X Totals" column sums.
+  const byCategory = new Map<string, number>();
+  for (const rec of allRecords) {
+    if (rec.kind !== "expense" || rec.subSection !== "weekly") continue;
+    const k = rec.categoryType === "other" ? "Other (notes)" : rec.categoryLabel;
+    byCategory.set(k, (byCategory.get(k) ?? 0) + parseFloat(rec.amountUsd));
+  }
+  console.log(`\nWeekly expenses by category:`);
+  for (const [k, v] of [...byCategory.entries()].sort()) {
+    console.log(`  ${k.padEnd(20)} $${v.toFixed(2)}`);
+  }
+
+  if (allUnknownHeaders.size > 0) {
+    console.log(`\nUnknown weekly headers (extend WEEKLY_COLUMN_MAP):`);
+    for (const h of allUnknownHeaders) console.log(`  - "${h}"`);
+  }
+  if (allErrors.length > 0) {
+    console.log(`\nErrors (${allErrors.length}):`);
+    for (const e of allErrors.slice(0, 30)) console.log(`  row ${e.row}: ${e.reason}`);
+    if (allErrors.length > 30) console.log(`  ... ${allErrors.length - 30} more`);
   }
 
   if (DRY_RUN) {
-    console.log("\nDRY RUN — no DB writes. Sample of first 3 parsed rows:");
-    console.log(JSON.stringify(parsed.slice(0, 3), null, 2));
+    console.log(`\nDRY RUN — no DB writes. Sample records:`);
+    const samples: ParsedRecord[] = [];
+    for (const wantKind of ["expense", "harvest_income", "cash_movement"] as const) {
+      const found = allRecords.filter((r) => r.kind === wantKind).slice(0, 2);
+      samples.push(...found);
+    }
+    console.log(JSON.stringify(samples, null, 2));
     return;
   }
 
   // ── DB writes ───────────────────────────────────────────────────────
 
-  const [account] = await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.slug, ACCOUNT_SLUG)).limit(1);
+  const [account] = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(eq(accounts.slug, ACCOUNT_SLUG))
+    .limit(1);
   if (!account) {
     console.error(`Account "${ACCOUNT_SLUG}" not found. Run pnpm db:seed first.`);
     process.exit(1);
@@ -321,115 +666,107 @@ async function main() {
     process.exit(1);
   }
 
-  // Idempotency: delete previously-ingested rows from this source.
-  // When a year filter is active, ONLY delete rows from that year so other
-  // years' ingested data survives a partial re-run.
   const yearFrom = YEAR_FILTER !== null ? `${YEAR_FILTER}-01-01` : null;
   const yearTo = YEAR_FILTER !== null ? `${YEAR_FILTER}-12-31` : null;
 
+  // Idempotency: clear prior ingests scoped by year. Filter on the natural
+  // event date (entry/transfer/harvest) NOT week_start_date — Sunday-start
+  // weeks mean an early-January entry's weekStartDate can fall in the
+  // previous calendar year, which would dodge a weekStartDate-based filter
+  // and produce duplicates on re-run.
   const expDelWhere = yearFrom
     ? and(
         like(expenseEntries.source, `${SOURCE_PREFIX}%`),
-        gte(expenseEntries.weekStartDate, yearFrom),
-        lte(expenseEntries.weekStartDate, yearTo!)
+        gte(expenseEntries.entryDate, yearFrom),
+        lte(expenseEntries.entryDate, yearTo!)
       )
     : like(expenseEntries.source, `${SOURCE_PREFIX}%`);
   const expDel = await db.delete(expenseEntries).where(expDelWhere).returning({ id: expenseEntries.id });
-  console.log(`Cleared ${expDel.length} prior expense entries from this source${YEAR_FILTER ? ` (year ${YEAR_FILTER})` : ""}.`);
+  console.log(`Cleared ${expDel.length} prior expense entries${YEAR_FILTER ? ` (year ${YEAR_FILTER})` : ""}.`);
 
   const cmDelWhere = yearFrom
     ? and(
         like(cashMovements.source, `${SOURCE_PREFIX}%`),
-        gte(cashMovements.weekStartDate, yearFrom),
-        lte(cashMovements.weekStartDate, yearTo!)
+        gte(cashMovements.transferDate, yearFrom),
+        lte(cashMovements.transferDate, yearTo!)
       )
     : like(cashMovements.source, `${SOURCE_PREFIX}%`);
   const cmDel = await db.delete(cashMovements).where(cmDelWhere).returning({ id: cashMovements.id });
-  console.log(`Cleared ${cmDel.length} prior cash movements from this source${YEAR_FILTER ? ` (year ${YEAR_FILTER})` : ""}.`);
+  console.log(`Cleared ${cmDel.length} prior cash movements${YEAR_FILTER ? ` (year ${YEAR_FILTER})` : ""}.`);
 
-  // For harvests we delete by lot_number prefix (the harvests table doesn't
-  // carry a `source` column). Year-bound when filter active.
   const harvDelWhere = yearFrom
     ? and(
         like(harvests.lotNumber, `${SOURCE_PREFIX}%`),
-        gte(harvests.weekStartDate, yearFrom),
-        lte(harvests.weekStartDate, yearTo!)
+        gte(harvests.harvestDate, yearFrom),
+        lte(harvests.harvestDate, yearTo!)
       )
     : like(harvests.lotNumber, `${SOURCE_PREFIX}%`);
   const harvDel = await db.delete(harvests).where(harvDelWhere).returning({ id: harvests.id });
   console.log(`Cleared ${harvDel.length} prior ingested harvests${YEAR_FILTER ? ` (year ${YEAR_FILTER})` : ""}.`);
 
-  // Silence unused-import warning when the year filter isn't active.
-  void drizzleSql;
-
-  for (const row of parsed) {
-    const source = `${SOURCE_PREFIX}row_${row.rowIndex}`;
-    for (const cell of row.cells) {
-      const def = COLUMN_MAP[cell.column];
-      if (def.kind === "expense" || def.kind === "other_note") {
-        // The "Other" column lives here too — for v1 we treat it as a single
-        // amount with label "Other". When James adds a separate "Other note"
-        // text column to COLUMN_MAP, the note text gets carried into
-        // category_label per row by detecting paired columns.
-        const isOther = def.kind === "other_note";
-        await db.insert(expenseEntries).values({
-          entryDate: row.weekStartDate,
-          weekStartDate: row.weekStartDate,
-          categoryType: isOther ? "other" : def.category,
-          categoryLabel: isOther ? "Other" : def.label,
-          amountUsd: cell.amountUsd,
-          accountId: account.id,
-          payee: isOther ? null : def.label,
-          source,
-        });
-        report.expensesInserted++;
-      } else if (def.kind === "income") {
-        // Income — create a backfill harvest + settlement. Master sheet
-        // carries the lump-sum net pay only; per-grade detail comes from
-        // the Liquidación PDFs in a future phase.
-        const [{ id: harvestId }] = await db
-          .insert(harvests)
-          .values({
-            harvestDate: row.weekStartDate,
-            weekStartDate: row.weekStartDate,
-            processorCompanyId: processor.id,
-            lotNumber: source, // embed source so we can find/delete on re-ingest
-            kgDelivered: "0",
-            notes: "Backfilled from master sheet — kg + grade detail TBD from Liquidación PDF.",
-          })
-          .returning({ id: harvests.id });
-        await db.insert(harvestSettlements).values({
-          harvestId,
-          settlementDate: row.weekStartDate,
-          kgManifested: "0",
-          kgProcessed: "0",
-          kgWaste: "0",
-          subtotalUsd: cell.amountUsd,
-          retentionUsd: "0",
-          netPayUsd: cell.amountUsd,
-          paidToAccountId: account.id,
-          paidDate: row.weekStartDate,
-        });
-        report.harvestsInserted++;
-      } else if (def.kind === "capital_in" || def.kind === "capital_out") {
-        const direction: CashMovementDirection = def.kind === "capital_in" ? "in_to_ec" : "out_to_us";
-        await db.insert(cashMovements).values({
-          transferDate: row.weekStartDate,
-          weekStartDate: row.weekStartDate,
-          direction,
-          amountUsd: cell.amountUsd,
-          accountId: account.id,
-          counterparty: direction === "in_to_ec" ? "James US" : "US side",
-          notes: `Ingested from master sheet column "${cell.column}".`,
-          source,
-        });
-        report.cashMovementsInserted++;
-      }
+  // Insert.
+  const counts = { expenses: 0, harvests: 0, cashMovements: 0 };
+  for (const rec of allRecords) {
+    if (rec.kind === "expense") {
+      const sub = rec.subSection === "weekly" ? "weekly" : "other";
+      const source = `${SOURCE_PREFIX}${sub}:row_${rec.rowIndex}`;
+      await db.insert(expenseEntries).values({
+        entryDate: rec.entryDate,
+        weekStartDate: rec.weekStartDate,
+        categoryType: rec.categoryType,
+        categoryLabel: rec.categoryLabel,
+        amountUsd: rec.amountUsd,
+        accountId: account.id,
+        payee: rec.payee,
+        notes: rec.notes,
+        source,
+      });
+      counts.expenses++;
+    } else if (rec.kind === "harvest_income") {
+      const source = `${SOURCE_PREFIX}harvest:row_${rec.rowIndex}`;
+      const [{ id: harvestId }] = await db
+        .insert(harvests)
+        .values({
+          harvestDate: rec.date,
+          weekStartDate: rec.weekStartDate,
+          processorCompanyId: processor.id,
+          lotNumber: source,
+          kgDelivered: "0",
+          notes: "Backfilled from master sheet — kg + grade detail TBD from Liquidación PDF.",
+        })
+        .returning({ id: harvests.id });
+      await db.insert(harvestSettlements).values({
+        harvestId,
+        settlementDate: rec.date,
+        kgManifested: "0",
+        kgProcessed: "0",
+        kgWaste: "0",
+        subtotalUsd: rec.amountUsd,
+        retentionUsd: "0",
+        netPayUsd: rec.amountUsd,
+        paidToAccountId: account.id,
+        paidDate: rec.date,
+      });
+      counts.harvests++;
+    } else if (rec.kind === "cash_movement") {
+      const sub = rec.direction === "in_to_ec" ? "cap_in" : "cap_out";
+      const source = `${SOURCE_PREFIX}${sub}:row_${rec.rowIndex}`;
+      await db.insert(cashMovements).values({
+        transferDate: rec.date,
+        weekStartDate: rec.weekStartDate,
+        direction: rec.direction,
+        amountUsd: rec.amountUsd,
+        accountId: account.id,
+        counterparty: rec.direction === "in_to_ec" ? "James US" : "US side",
+        notes: rec.notes,
+        source,
+      });
+      counts.cashMovements++;
     }
   }
 
   console.log(
-    `\nIngested ${report.expensesInserted} expenses + ${report.harvestsInserted} harvest payments + ${report.cashMovementsInserted} cash movements.`
+    `\nInserted ${counts.expenses} expenses + ${counts.harvests} harvests + ${counts.cashMovements} cash movements.`
   );
 
   // Write the report.
@@ -438,19 +775,27 @@ async function main() {
     `# Master sheet ingest report`,
     `Run: ${new Date().toISOString()}`,
     `Source: ${SHEET_PATH}`,
+    `Year filter: ${YEAR_FILTER ?? "(none)"}`,
     ``,
-    `- Rows read: ${report.rowsRead}`,
-    `- Rows parsed: ${report.rowsParsed}`,
-    `- Rows skipped: ${report.rowsSkipped}`,
-    `- Expenses inserted: ${report.expensesInserted}`,
-    `- Harvest payments inserted: ${report.harvestsInserted}`,
-    `- Cash movements inserted: ${report.cashMovementsInserted}`,
+    `## Records`,
+    `- Weekly expense rows: ${tallies.weeklyExpense}`,
+    `- Other-purchase expenses: ${tallies.otherExpense}`,
+    `- Harvest income rows: ${tallies.harvestIncome}`,
+    `- Capital_in cash movements: ${tallies.capitalIn}`,
+    `- Capital_out cash movements: ${tallies.capitalOut}`,
     ``,
-    `## Unknown columns (extend COLUMN_MAP)`,
-    [...report.unknownColumns].map((c) => `- \`${c}\``).join("\n") || "(none)",
+    `## Totals (USD)`,
+    `- Weekly expenses: $${totals.weeklyExpenseUsd.toFixed(2)}`,
+    `- Other-purchase expenses: $${totals.otherExpenseUsd.toFixed(2)}`,
+    `- Harvest income: $${totals.harvestIncomeUsd.toFixed(2)}`,
+    `- Capital_in (US→EC): $${totals.capitalInUsd.toFixed(2)}`,
+    `- Capital_out (EC→US): $${totals.capitalOutUsd.toFixed(2)}`,
+    ``,
+    `## Unknown weekly headers`,
+    [...allUnknownHeaders].map((h) => `- \`${h}\``).join("\n") || "(none)",
     ``,
     `## Errors`,
-    report.errors.map((e) => `- Row ${e.row}: ${e.reason}`).join("\n") || "(none)",
+    allErrors.map((e) => `- Row ${e.row}: ${e.reason}`).join("\n") || "(none)",
   ];
   writeFileSync(reportPath, lines.join("\n") + "\n", "utf8");
   console.log(`Report: ${reportPath}`);

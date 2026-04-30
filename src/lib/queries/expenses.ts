@@ -164,11 +164,13 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
     return { categories: CATEGORY_TYPES, weeks: [] };
   }
 
-  // Per-week, per-category sums of expenses.
+  // Per-week, per-category sums of expenses. Filter on entry_date (the
+  // natural event date) — week_start_date filters would drop boundary
+  // entries whose Sunday-week happens to land in the prior calendar year.
   const expWhere = [
     eq(expenseEntries.accountId, account.id),
-    opts.from ? gte(expenseEntries.weekStartDate, opts.from) : undefined,
-    opts.to ? lte(expenseEntries.weekStartDate, opts.to) : undefined,
+    opts.from ? gte(expenseEntries.entryDate, opts.from) : undefined,
+    opts.to ? lte(expenseEntries.entryDate, opts.to) : undefined,
   ].filter(Boolean);
 
   const expRows = await db
@@ -205,11 +207,13 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
     .where(and(...setWhere))
     .groupBy(sundayExpr);
 
-  // Per-week capital flow aggregates from cash_movements.
+  // Per-week capital flow aggregates from cash_movements. Filter on the
+  // transfer date (the actual wire date), same year-boundary reasoning as
+  // expenses above.
   const cmWhere = [
     eq(cashMovements.accountId, account.id),
-    opts.from ? gte(cashMovements.weekStartDate, opts.from) : undefined,
-    opts.to ? lte(cashMovements.weekStartDate, opts.to) : undefined,
+    opts.from ? gte(cashMovements.transferDate, opts.from) : undefined,
+    opts.to ? lte(cashMovements.transferDate, opts.to) : undefined,
   ].filter(Boolean);
 
   const cmRows = await db

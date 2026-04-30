@@ -86,8 +86,8 @@ export async function getWeeklyCashAgg(opts: { from?: string; to?: string; accou
 
   const where = [
     eq(cashMovements.accountId, account.id),
-    opts.from ? gte(cashMovements.weekStartDate, opts.from) : undefined,
-    opts.to ? lte(cashMovements.weekStartDate, opts.to) : undefined,
+    opts.from ? gte(cashMovements.transferDate, opts.from) : undefined,
+    opts.to ? lte(cashMovements.transferDate, opts.to) : undefined,
   ].filter(Boolean);
 
   const rows = await db

@@ -1,7 +1,9 @@
 # MCP config contains OAuth client secret — never commit
 .mcp.json
 
-# Local Claude Code overrides
+# Local Claude Code overrides — contain Google OAuth client secret in
+# Bash permission rules; never commit
+.claude/settings.json
 .claude/settings.local.json
 
 # Node / Next.js
