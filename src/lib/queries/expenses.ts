@@ -62,18 +62,41 @@ export type ExpenseRow = {
 
 export type WeekRow = {
   weekStartDate: string;
-  byCategory: Record<ExpenseCategoryType, string>; // numeric strings ("180.00")
-  gross: string; // total operating outflows this week (sum of categories)
-  settlementsIn: string; // Liquidación net pay landed this week (paid_date)
-  capitalIn: string; // wires from US into FincaEC (cash_movements direction='in_to_ec')
-  capitalOut: string; // wires from FincaEC back to US (direction='out_to_us')
-  net: string; // settlementsIn − gross (operational only — capital flows shown separately)
+  byColumn: Record<string, { amount: string; note: string | null }>; // keyed by label
+  gross: string;
+  settlementsIn: string;
+  capitalIn: string;
+  capitalOut: string;
+  net: string;
 };
 
 export type WeeklyGrid = {
-  categories: ExpenseCategoryType[];
+  columns: string[]; // master-sheet labels in display order
   weeks: WeekRow[];
 };
+
+// Preferred display order; anything else slots in alphabetically after these.
+const PREFERRED_LABEL_ORDER = [
+  "Water",
+  "Jornales",
+  "Chavito",
+  "Engineer",
+  "Isaac",
+  "Other",
+];
+
+function orderLabels(found: Set<string>): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const p of PREFERRED_LABEL_ORDER) {
+    if (found.has(p)) {
+      ordered.push(p);
+      seen.add(p);
+    }
+  }
+  const rest = [...found].filter((l) => !seen.has(l)).sort((a, b) => a.localeCompare(b));
+  return [...ordered, ...rest];
+}
 
 // Convert a `date` column value coming back from the driver. Postgres `date`
 // arrives either as a Date object or an ISO string depending on driver config.
@@ -158,33 +181,40 @@ export async function getExpenseById(id: string): Promise<ExpenseRow | null> {
 }
 
 // ── Weekly grid ───────────────────────────────────────────────────────
-// Aggregates done in SQL to keep TS-side memory low; the result is at most
-// (weeks × categories) rows.
+// Per-week, per-label sums. Labels match what's actually in the data
+// (master-sheet columns: Water, Jornales, Chavito, Engineer, Isaac,
+// Other-with-note). No invented bucketing.
 export async function getWeeklyGrid(opts: { from?: string; to?: string; accountSlug?: string } = {}): Promise<WeeklyGrid> {
   const slug = opts.accountSlug ?? "finca-ec";
   const [account] = await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.slug, slug)).limit(1);
   if (!account) {
-    return { categories: CATEGORY_TYPES, weeks: [] };
+    return { columns: [], weeks: [] };
   }
 
-  // Per-week, per-category sums of expenses. Filter on entry_date (the
-  // natural event date) — week_start_date filters would drop boundary
-  // entries whose Sunday-week happens to land in the prior calendar year.
+  // Filter on entry_date (the natural event date) — week_start_date filters
+  // would drop boundary entries whose Sunday-week happens to land in the
+  // prior calendar year.
   const expWhere = [
     eq(expenseEntries.accountId, account.id),
     opts.from ? gte(expenseEntries.entryDate, opts.from) : undefined,
     opts.to ? lte(expenseEntries.entryDate, opts.to) : undefined,
   ].filter(Boolean);
 
+  // Two passes: aggregate by (week, label) for the totals, AND collect notes
+  // for the "Other" column. The Other column shows the note inline below the
+  // amount because the same Other slot can carry different reasons week to
+  // week (fertilizer one week, equipment repair the next).
   const expRows = await db
     .select({
       weekStartDate: expenseEntries.weekStartDate,
+      categoryLabel: expenseEntries.categoryLabel,
       categoryType: expenseEntries.categoryType,
+      notes: expenseEntries.notes,
       total: sql<string>`sum(${expenseEntries.amountUsd})::numeric(12,2)`,
     })
     .from(expenseEntries)
     .where(expWhere.length ? and(...expWhere) : undefined)
-    .groupBy(expenseEntries.weekStartDate, expenseEntries.categoryType);
+    .groupBy(expenseEntries.weekStartDate, expenseEntries.categoryLabel, expenseEntries.categoryType, expenseEntries.notes);
 
   // Per-week sums of settlement net pay landing in this account (by paid_date,
   // which is when the cash actually hit — settlement_date is when the doc was
@@ -229,17 +259,15 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
     .where(and(...cmWhere))
     .groupBy(cashMovements.weekStartDate);
 
-  // Stitch into weeks.
+  // Discover the label set in the data and stitch into weeks.
+  const allLabels = new Set<string>();
   const byWeek = new Map<string, WeekRow>();
   function ensure(w: string): WeekRow {
     let row = byWeek.get(w);
     if (!row) {
       row = {
         weekStartDate: w,
-        byCategory: Object.fromEntries(CATEGORY_TYPES.map((c) => [c, "0.00"])) as Record<
-          ExpenseCategoryType,
-          string
-        >,
+        byColumn: {},
         gross: "0.00",
         settlementsIn: "0.00",
         capitalIn: "0.00",
@@ -254,14 +282,18 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
   for (const r of expRows) {
     const w = dateStr(r.weekStartDate);
     const row = ensure(w);
-    // Defensive: a legacy `labor_water` row would still sit in the DB; map it
-    // into operating_bills for display so the column it lives in matches its
-    // semantics.
-    const ct =
-      r.categoryType === "labor_water"
-        ? "operating_bills"
-        : (r.categoryType as ExpenseCategoryType);
-    row.byCategory[ct] = (Number(row.byCategory[ct] ?? "0") + Number(r.total ?? "0")).toFixed(2);
+    // Resolve the label to display. category_label is the master-sheet
+    // column name (Water, Jornales, etc.); when empty (legacy rows) fall
+    // back to a humanized category_type so the value is still visible.
+    const label = (r.categoryLabel ?? "").trim() || titleCase(r.categoryType);
+    allLabels.add(label);
+    const cell = row.byColumn[label] ?? { amount: "0.00", note: null as string | null };
+    const newAmount = (Number(cell.amount) + Number(r.total ?? 0)).toFixed(2);
+    // Keep the note when one exists. If multiple rows share the same week
+    // and label (rare), join the notes — operator can sort it out from
+    // the Feed tab.
+    const note = mergeNote(cell.note, r.notes);
+    row.byColumn[label] = { amount: newAmount, note };
   }
   for (const r of setRows) {
     const w = dateStr(r.weekStartDate);
@@ -275,18 +307,32 @@ export async function getWeeklyGrid(opts: { from?: string; to?: string; accountS
     row.capitalOut = r.outUsd ?? "0.00";
   }
 
-  // Compute gross (sum of categories) and operational net.
+  // Compute gross (sum across labels) and operational net.
   for (const row of byWeek.values()) {
     let gross = 0;
-    for (const c of CATEGORY_TYPES) gross += Number(row.byCategory[c] ?? "0");
+    for (const cell of Object.values(row.byColumn)) gross += Number(cell.amount);
     row.gross = gross.toFixed(2);
     row.net = (Number(row.settlementsIn) - gross).toFixed(2);
   }
 
-  // Sort newest first.
+  const columns = orderLabels(allLabels);
   const weeks = [...byWeek.values()].sort((a, b) => (a.weekStartDate < b.weekStartDate ? 1 : -1));
 
-  return { categories: CATEGORY_TYPES, weeks };
+  return { columns, weeks };
+}
+
+function titleCase(s: string): string {
+  return s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function mergeNote(a: string | null, b: string | null): string | null {
+  const left = (a ?? "").trim();
+  const right = (b ?? "").trim();
+  if (!left && !right) return null;
+  if (!left) return right;
+  if (!right) return left;
+  if (left === right) return left;
+  return `${left}; ${right}`;
 }
 
 // ── Data Entry — week-bounded fetch ────────────────────────────────────

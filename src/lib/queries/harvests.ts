@@ -1,11 +1,18 @@
 // Harvests pillar — read paths. Types defined here (NOT in lib/data.ts).
+//
+// A harvest can have MULTIPLE settlement rows (advance / balance / lump_sum).
+// `settlements` is the full list ordered by date; `settlement` is the most
+// recent for the existing single-row UI to keep working.
 
-import { desc, eq, and, gte, lte, sql } from "drizzle-orm";
+import { desc, eq, and, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { harvests, harvestSettlements, companies } from "@/db/schema";
 
+export type SettlementKind = "advance" | "balance" | "lump_sum";
+
 export type SettlementRow = {
   id: string;
+  kind: SettlementKind;
   settlementDate: string;
   kgManifested: string;
   kgProcessed: string;
@@ -20,6 +27,7 @@ export type SettlementRow = {
   subtotalUsd: string;
   retentionUsd: string;
   netPayUsd: string;
+  expectedTotalUsd: string | null;
   paidToAccountId: string;
   paidDate: string | null;
   pdfUrl: string | null;
@@ -30,13 +38,16 @@ export type HarvestRow = {
   id: string;
   harvestDate: string;
   weekStartDate: string;
-  processorCompanyId: string;
-  processorName: string;
+  processorCompanyId: string | null;
+  processorName: string | null;
   processorSlug: string | null;
   lotNumber: string | null;
   kgDelivered: string;
   notes: string | null;
   evidenceUrl: string | null;
+  settlements: SettlementRow[];
+  // Most recent settlement (by paidDate desc, settlementDate desc). Kept for
+  // the existing single-row callers; new code should consume `settlements`.
   settlement: SettlementRow | null;
 };
 
@@ -61,25 +72,14 @@ function dateStrOrNull(v: string | Date | null | undefined): string | null {
   return dateStr(v);
 }
 
-// Single row builder shared by feed + by-id.
-function rowToHarvest(r: {
-  // harvest fields
+type SettlementRawRow = {
   id: string;
-  harvestDate: string | Date;
-  weekStartDate: string | Date;
-  processorCompanyId: string;
-  processorName: string;
-  processorSlug: string | null;
-  lotNumber: string | null;
-  kgDelivered: string;
-  notes: string | null;
-  evidenceUrl: string | null;
-  // settlement fields (nullable — LEFT JOIN)
-  settlementId: string | null;
-  settlementDate: string | Date | null;
-  kgManifested: string | null;
-  kgProcessed: string | null;
-  kgWaste: string | null;
+  harvestId: string;
+  kind: SettlementKind;
+  settlementDate: string | Date;
+  kgManifested: string;
+  kgProcessed: string;
+  kgWaste: string;
   wastePct: string | null;
   grade1_5Kg: string | null;
   grade2Kg: string | null;
@@ -87,68 +87,49 @@ function rowToHarvest(r: {
   grade1_5RateUsd: string | null;
   grade2RateUsd: string | null;
   gradeSmallRateUsd: string | null;
-  subtotalUsd: string | null;
-  retentionUsd: string | null;
-  netPayUsd: string | null;
-  paidToAccountId: string | null;
+  subtotalUsd: string;
+  retentionUsd: string;
+  netPayUsd: string;
+  expectedTotalUsd: string | null;
+  paidToAccountId: string;
   paidDate: string | Date | null;
   pdfUrl: string | null;
   wasteObservations: string | null;
-}): HarvestRow {
-  const settlement: SettlementRow | null = r.settlementId
-    ? {
-        id: r.settlementId,
-        settlementDate: dateStr(r.settlementDate),
-        kgManifested: r.kgManifested!,
-        kgProcessed: r.kgProcessed!,
-        kgWaste: r.kgWaste!,
-        wastePct: r.wastePct,
-        grade1_5Kg: r.grade1_5Kg,
-        grade2Kg: r.grade2Kg,
-        gradeSmallKg: r.gradeSmallKg,
-        grade1_5RateUsd: r.grade1_5RateUsd,
-        grade2RateUsd: r.grade2RateUsd,
-        gradeSmallRateUsd: r.gradeSmallRateUsd,
-        subtotalUsd: r.subtotalUsd!,
-        retentionUsd: r.retentionUsd!,
-        netPayUsd: r.netPayUsd!,
-        paidToAccountId: r.paidToAccountId!,
-        paidDate: dateStrOrNull(r.paidDate),
-        pdfUrl: r.pdfUrl,
-        wasteObservations: r.wasteObservations,
-      }
-    : null;
+};
 
+function shapeSettlement(s: SettlementRawRow): SettlementRow {
   return {
-    id: r.id,
-    harvestDate: dateStr(r.harvestDate),
-    weekStartDate: dateStr(r.weekStartDate),
-    processorCompanyId: r.processorCompanyId,
-    processorName: r.processorName,
-    processorSlug: r.processorSlug,
-    lotNumber: r.lotNumber,
-    kgDelivered: r.kgDelivered,
-    notes: r.notes,
-    evidenceUrl: r.evidenceUrl,
-    settlement,
+    id: s.id,
+    kind: s.kind,
+    settlementDate: dateStr(s.settlementDate),
+    kgManifested: s.kgManifested,
+    kgProcessed: s.kgProcessed,
+    kgWaste: s.kgWaste,
+    wastePct: s.wastePct,
+    grade1_5Kg: s.grade1_5Kg,
+    grade2Kg: s.grade2Kg,
+    gradeSmallKg: s.gradeSmallKg,
+    grade1_5RateUsd: s.grade1_5RateUsd,
+    grade2RateUsd: s.grade2RateUsd,
+    gradeSmallRateUsd: s.gradeSmallRateUsd,
+    subtotalUsd: s.subtotalUsd,
+    retentionUsd: s.retentionUsd,
+    netPayUsd: s.netPayUsd,
+    expectedTotalUsd: s.expectedTotalUsd,
+    paidToAccountId: s.paidToAccountId,
+    paidDate: dateStrOrNull(s.paidDate),
+    pdfUrl: s.pdfUrl,
+    wasteObservations: s.wasteObservations,
   };
 }
 
-// Common SELECT shape: harvest fields + processor + LEFT JOIN settlement.
-function harvestSelect() {
-  return db
+async function fetchSettlementsForHarvests(harvestIds: string[]): Promise<Map<string, SettlementRow[]>> {
+  if (harvestIds.length === 0) return new Map();
+  const rows = await db
     .select({
-      id: harvests.id,
-      harvestDate: harvests.harvestDate,
-      weekStartDate: harvests.weekStartDate,
-      processorCompanyId: harvests.processorCompanyId,
-      processorName: companies.name,
-      processorSlug: companies.slug,
-      lotNumber: harvests.lotNumber,
-      kgDelivered: harvests.kgDelivered,
-      notes: harvests.notes,
-      evidenceUrl: harvests.evidenceUrl,
-      settlementId: harvestSettlements.id,
+      id: harvestSettlements.id,
+      harvestId: harvestSettlements.harvestId,
+      kind: harvestSettlements.kind,
       settlementDate: harvestSettlements.settlementDate,
       kgManifested: harvestSettlements.kgManifested,
       kgProcessed: harvestSettlements.kgProcessed,
@@ -163,14 +144,72 @@ function harvestSelect() {
       subtotalUsd: harvestSettlements.subtotalUsd,
       retentionUsd: harvestSettlements.retentionUsd,
       netPayUsd: harvestSettlements.netPayUsd,
+      expectedTotalUsd: harvestSettlements.expectedTotalUsd,
       paidToAccountId: harvestSettlements.paidToAccountId,
       paidDate: harvestSettlements.paidDate,
       pdfUrl: harvestSettlements.pdfUrl,
       wasteObservations: harvestSettlements.wasteObservations,
     })
+    .from(harvestSettlements)
+    .where(inArray(harvestSettlements.harvestId, harvestIds))
+    .orderBy(desc(harvestSettlements.paidDate), desc(harvestSettlements.settlementDate));
+
+  const map = new Map<string, SettlementRow[]>();
+  for (const r of rows) {
+    const list = map.get(r.harvestId) ?? [];
+    list.push(shapeSettlement(r as SettlementRawRow));
+    map.set(r.harvestId, list);
+  }
+  return map;
+}
+
+function harvestSelect() {
+  return db
+    .select({
+      id: harvests.id,
+      harvestDate: harvests.harvestDate,
+      weekStartDate: harvests.weekStartDate,
+      processorCompanyId: harvests.processorCompanyId,
+      processorName: companies.name,
+      processorSlug: companies.slug,
+      lotNumber: harvests.lotNumber,
+      kgDelivered: harvests.kgDelivered,
+      notes: harvests.notes,
+      evidenceUrl: harvests.evidenceUrl,
+    })
     .from(harvests)
-    .innerJoin(companies, eq(companies.id, harvests.processorCompanyId))
-    .leftJoin(harvestSettlements, eq(harvestSettlements.harvestId, harvests.id));
+    .leftJoin(companies, eq(companies.id, harvests.processorCompanyId));
+}
+
+function buildHarvestRow(
+  r: {
+    id: string;
+    harvestDate: string | Date;
+    weekStartDate: string | Date;
+    processorCompanyId: string | null;
+    processorName: string | null;
+    processorSlug: string | null;
+    lotNumber: string | null;
+    kgDelivered: string;
+    notes: string | null;
+    evidenceUrl: string | null;
+  },
+  settlements: SettlementRow[]
+): HarvestRow {
+  return {
+    id: r.id,
+    harvestDate: dateStr(r.harvestDate),
+    weekStartDate: dateStr(r.weekStartDate),
+    processorCompanyId: r.processorCompanyId,
+    processorName: r.processorName,
+    processorSlug: r.processorSlug,
+    lotNumber: r.lotNumber,
+    kgDelivered: r.kgDelivered,
+    notes: r.notes,
+    evidenceUrl: r.evidenceUrl,
+    settlements,
+    settlement: settlements[0] ?? null,
+  };
 }
 
 export async function getHarvestFeed(filters: { from?: string; to?: string } = {}): Promise<HarvestRow[]> {
@@ -183,12 +222,15 @@ export async function getHarvestFeed(filters: { from?: string; to?: string } = {
     .where(where.length ? and(...where) : undefined)
     .orderBy(desc(harvests.harvestDate));
 
-  return rows.map(rowToHarvest);
+  const settlementMap = await fetchSettlementsForHarvests(rows.map((r) => r.id));
+  return rows.map((r) => buildHarvestRow(r, settlementMap.get(r.id) ?? []));
 }
 
 export async function getHarvestById(id: string): Promise<HarvestRow | null> {
   const [row] = await harvestSelect().where(eq(harvests.id, id)).limit(1);
-  return row ? rowToHarvest(row) : null;
+  if (!row) return null;
+  const settlementMap = await fetchSettlementsForHarvests([id]);
+  return buildHarvestRow(row, settlementMap.get(id) ?? []);
 }
 
 export async function getHarvestStats(opts: { from?: string; to?: string } = {}): Promise<HarvestStats> {
@@ -199,8 +241,8 @@ export async function getHarvestStats(opts: { from?: string; to?: string } = {})
 
   const [agg] = await db
     .select({
-      count: sql<number>`count(*)::int`,
-      pendingCount: sql<number>`sum(case when ${harvestSettlements.id} is null then 1 else 0 end)::int`,
+      count: sql<number>`count(distinct ${harvests.id})::int`,
+      pendingCount: sql<number>`(count(distinct ${harvests.id}) filter (where ${harvestSettlements.id} is null))::int`,
       kgDelivered: sql<string>`coalesce(sum(${harvests.kgDelivered}), 0)::numeric(12,2)`,
       kgProcessed: sql<string>`coalesce(sum(${harvestSettlements.kgProcessed}), 0)::numeric(12,2)`,
       kgWaste: sql<string>`coalesce(sum(${harvestSettlements.kgWaste}), 0)::numeric(12,2)`,

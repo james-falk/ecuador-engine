@@ -10,6 +10,7 @@ import { db } from "@/db";
 import {
   companies,
   complianceItems,
+  entityDriveFiles,
   expenseEntries,
   harvests,
   harvestSettlements,
@@ -163,7 +164,7 @@ export async function getCompanyActivity(
 }
 
 export type CompanyDocument = {
-  source: "harvest_settlement" | "harvest_evidence" | "compliance";
+  source: "harvest_settlement" | "harvest_evidence" | "compliance" | "pinned";
   id: string;
   date: string;
   label: string;
@@ -208,14 +209,34 @@ export async function getCompanyDocuments(companyId: string): Promise<CompanyDoc
     .from(complianceItems)
     .where(and(eq(complianceItems.ownerCompanyId, companyId), isNotNull(complianceItems.evidenceUrl)));
 
+  const pinRows = await db
+    .select({
+      id: entityDriveFiles.id,
+      url: entityDriveFiles.driveViewLink,
+      name: entityDriveFiles.driveFileName,
+      date: entityDriveFiles.pinnedAt,
+    })
+    .from(entityDriveFiles)
+    .where(eq(entityDriveFiles.companyId, companyId));
+
   const out: CompanyDocument[] = [];
+
+  for (const r of pinRows) {
+    out.push({
+      source: "pinned",
+      id: r.id,
+      date: dateStr(r.date),
+      label: r.name,
+      url: r.url,
+    });
+  }
   for (const r of settlementRows) {
     if (!r.url) continue;
     out.push({
       source: "harvest_settlement",
       id: r.id,
       date: dateStr(r.date),
-      label: `Liquidación PDF · ${dateStr(r.date)}`,
+      label: `Processor report PDF · ${dateStr(r.date)}`,
       url: r.url,
     });
   }

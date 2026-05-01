@@ -11,6 +11,8 @@ export type TaskStatus =
   | "done"
   | "archived";
 
+export type TaskPriority = "low" | "medium" | "high";
+
 export type TaskRow = {
   id: string;
   title: string;
@@ -23,7 +25,8 @@ export type TaskRow = {
   relatedCompanySlug: string | null;
   tags: string[];
   dueDate: string | null;
-  priority: number;
+  priority: TaskPriority;
+  blockedReason: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -56,6 +59,7 @@ const taskSelect = () =>
       tags: tasks.tags,
       dueDate: tasks.dueDate,
       priority: tasks.priority,
+      blockedReason: tasks.blockedReason,
       createdAt: tasks.createdAt,
       updatedAt: tasks.updatedAt,
       completedAt: tasks.completedAt,
@@ -78,7 +82,8 @@ function rowToTask(r: Awaited<ReturnType<ReturnType<typeof taskSelect>["execute"
     relatedCompanySlug: r.relatedCompanySlug,
     tags: (r.tags as string[] | null) ?? [],
     dueDate: dateStr(r.dueDate),
-    priority: r.priority,
+    priority: r.priority as TaskPriority,
+    blockedReason: r.blockedReason,
     createdAt: tsStr(r.createdAt),
     updatedAt: tsStr(r.updatedAt),
     completedAt: tsStr(r.completedAt),
@@ -110,9 +115,9 @@ export async function getTasks(filters: TaskFilters = {}): Promise<TaskRow[]> {
   const rows = await taskSelect()
     .where(where.length ? and(...where) : undefined)
     .orderBy(
-      // Overdue first (NULLs last), then priority desc, then most recent.
+      // Overdue first (NULLs last), then priority high→low, then most recent.
       sql`${tasks.dueDate} ASC NULLS LAST`,
-      desc(tasks.priority),
+      sql`CASE ${tasks.priority} WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END`,
       desc(tasks.createdAt)
     );
   return rows.map(rowToTask);

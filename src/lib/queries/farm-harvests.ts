@@ -9,6 +9,8 @@ export type FarmHarvestRow = {
   harvestDate: string;
   flowerCount: number | null;
   bucketCount: number | null;
+  flowersPickedDate: string | null;
+  flowersPickedCount: number | null;
   notes: string | null;
   recordedBy: string | null;
   // Linked delivery info (LEFT JOIN). If a delivery exists pointing to
@@ -34,6 +36,8 @@ const baseSelect = () =>
       harvestDate: farmHarvests.harvestDate,
       flowerCount: farmHarvests.flowerCount,
       bucketCount: farmHarvests.bucketCount,
+      flowersPickedDate: farmHarvests.flowersPickedDate,
+      flowersPickedCount: farmHarvests.flowersPickedCount,
       notes: farmHarvests.notes,
       recordedBy: farmHarvests.recordedBy,
       deliveryId: harvests.id,
@@ -52,6 +56,8 @@ function rowToFarmHarvest(
     harvestDate: dateStr(r.harvestDate),
     flowerCount: r.flowerCount,
     bucketCount: r.bucketCount,
+    flowersPickedDate: r.flowersPickedDate ? dateStr(r.flowersPickedDate) : null,
+    flowersPickedCount: r.flowersPickedCount,
     notes: r.notes,
     recordedBy: r.recordedBy,
     delivery: r.deliveryId

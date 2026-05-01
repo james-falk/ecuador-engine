@@ -433,7 +433,8 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
 
   // Harvest payment received — create OR update a single stub harvest +
   // settlement keyed by lot_number = source. kg=0 because the actual
-  // weights only land when the Liquidación PDF is parsed (Slice 8 follow-on).
+  // weights only land when the processor report is filed via the Harvests
+  // pillar.
   let harvestPayment = false;
   const harvestAmount = parsePositiveAmount(input.harvestPayment);
   const harvestSource = `${source}:harvest`;
@@ -474,7 +475,7 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
           processorCompanyId: processor.id,
           lotNumber: harvestSource,
           kgDelivered: "0",
-          notes: "Manual entry — kg + grade detail TBD from Liquidación PDF.",
+          notes: "Manual entry — kg + grade detail TBD from processor report.",
         })
         .returning({ id: harvests.id });
       harvestId = row.id;

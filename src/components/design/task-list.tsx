@@ -204,7 +204,7 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
         fontSize: 11,
         borderRadius: 999,
         border: `1px solid ${active ? "var(--green)" : "var(--line-soft)"}`,
-        background: active ? "var(--green-glow)" : "transparent",
+        background: active ? "oklch(from var(--green) l c h / 0.15)" : "transparent",
         color: active ? "var(--green)" : "var(--text-2)",
         cursor: "pointer",
         letterSpacing: "0.04em",
@@ -228,13 +228,18 @@ function TaskRowEl({ task, today, onOpen }: { task: TaskRow; today: string; onOp
     : null;
   const isDone = task.status === "done" || task.status === "archived";
 
+  const priorityColor =
+    task.priority === "high" ? "var(--rose)" :
+    task.priority === "medium" ? "var(--sky)" :
+    "var(--text-3)";
+
   return (
     <button
       type="button"
       onClick={onOpen}
       style={{
         display: "grid",
-        gridTemplateColumns: "1fr auto auto auto",
+        gridTemplateColumns: "auto 1fr auto auto auto",
         gap: 14,
         alignItems: "center",
         padding: "12px 14px",
@@ -247,6 +252,23 @@ function TaskRowEl({ task, today, onOpen }: { task: TaskRow; today: string; onOp
         opacity: isDone ? 0.55 : 1,
       }}
     >
+      <span
+        title={`priority: ${task.priority}`}
+        className="mono"
+        style={{
+          fontSize: 9.5,
+          letterSpacing: "0.06em",
+          textTransform: "uppercase",
+          color: priorityColor,
+          padding: "2px 5px",
+          borderRadius: 3,
+          background: `oklch(from ${priorityColor} l c h / 0.12)`,
+          minWidth: 50,
+          textAlign: "center",
+        }}
+      >
+        {task.priority}
+      </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
         <span
           style={{
@@ -262,6 +284,11 @@ function TaskRowEl({ task, today, onOpen }: { task: TaskRow; today: string; onOp
           {task.title}
         </span>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {task.status === "blocked" && task.blockedReason && (
+            <span className="mono" style={{ fontSize: 10, color: "var(--rose)" }}>
+              blocked: {task.blockedReason}
+            </span>
+          )}
           {task.relatedCompanySlug && task.relatedCompanyName && (
             <Link
               href={`/companies/${task.relatedCompanySlug}`}

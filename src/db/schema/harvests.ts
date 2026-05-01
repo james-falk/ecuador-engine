@@ -3,6 +3,7 @@ import {
   date,
   jsonb,
   numeric,
+  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -11,13 +12,18 @@ import {
 import { companies } from "./companies";
 import { accounts } from "./accounts";
 
+// Settlement stages. A harvest can have multiple rows: an advance up-front,
+// then a balance when the final lands. Historical lump-sum entries (the
+// "Harvest payments received" master-sheet column) carry kind='lump_sum'.
+export const settlementKindEnum = pgEnum("settlement_kind", ["advance", "balance", "lump_sum"]);
+
 // One row per delivery to a processor. v1 collapses "picked" and "delivered"
 // into a single event — if pre-delivery tracking becomes a need, add a
 // `picked_date date` column without changing the row's identity. The row's
 // state is implicit: a LEFT JOIN against `harvest_settlements` tells you
-// whether the Liquidación has come back (settlement row exists) or is still
-// pending (no settlement row yet). A "rejected" lot is a settlement row with
-// kg_processed = 0 — there's no separate status enum.
+// whether the processor report has come back (settlement row exists) or is
+// still pending (no settlement row yet). A "rejected" lot is a settlement row
+// with kg_processed = 0 — there's no separate status enum.
 export const harvests = pgTable("harvests", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id"),
@@ -27,11 +33,10 @@ export const harvests = pgTable("harvests", {
   // weekly grid doesn't recompute on every read and so we don't have to deal
   // with year-boundary ISO-week wraparound.
   weekStartDate: date("week_start_date").notNull(),
-  // Where the batch went. Required because we always know the processor at
-  // delivery time (it's literally the truck destination).
-  processorCompanyId: uuid("processor_company_id")
-    .notNull()
-    .references(() => companies.id),
+  // Where the batch went. Nullable so historical lump-sum entries (where the
+  // processor was an assumption) can sit unattributed. New rows entered going
+  // forward should always carry a processor.
+  processorCompanyId: uuid("processor_company_id").references(() => companies.id),
   lotNumber: text("lot_number"),
   kgDelivered: numeric("kg_delivered", { precision: 10, scale: 2 }).notNull(),
   notes: text("notes"),
@@ -46,16 +51,22 @@ export const harvests = pgTable("harvests", {
   lastTouchedAt: timestamp("last_touched_at", { withTimezone: true }),
 });
 
-// 1:1 with harvests. Captures the Liquidación PDF the processor returns.
+// One or more rows per harvest. Captures the processor's report PDF +
+// payment(s). Multiple rows allow advance/balance partial payments.
 // Every numeric is a real Postgres `numeric` (not float) so accounting math
 // is exact; in TS these round-trip as strings.
 export const harvestSettlements = pgTable("harvest_settlements", {
   id: uuid("id").primaryKey().defaultRandom(),
   organizationId: uuid("organization_id"),
+  // No `unique()` — a harvest can have multiple settlement rows (advance +
+  // balance + future stages). Operational status = sum(payments) vs expected.
   harvestId: uuid("harvest_id")
     .notNull()
-    .unique()
     .references(() => harvests.id, { onDelete: "cascade" }),
+  kind: settlementKindEnum("kind").notNull().default("lump_sum"),
+  // What we expect to be paid in total, set at delivery time (kg × rate).
+  // Lets the pending tracker compute "remaining = expected − sum(received)".
+  expectedTotalUsd: numeric("expected_total_usd", { precision: 12, scale: 2 }),
   settlementDate: date("settlement_date").notNull(),
   // Weights from the PDF.
   kgManifested: numeric("kg_manifested", { precision: 10, scale: 2 }).notNull(),
@@ -66,7 +77,7 @@ export const harvestSettlements = pgTable("harvest_settlements", {
   // rounds differently than our division would).
   wastePct: numeric("waste_pct", { precision: 5, scale: 2 }),
   // Per-grade kilos. Three columns is denormalization with intent: INCALPACK's
-  // Liquidación format is stable on these three tiers. `gradeBreakdown` is
+  // INCALPACK report format is stable on these three tiers. `gradeBreakdown` is
   // the escape hatch — populate it when a future processor reports more or
   // different grades; that's the trigger to migrate to a child line-item table.
   grade1_5Kg: numeric("grade_1_5_kg", { precision: 10, scale: 2 }),
@@ -92,7 +103,7 @@ export const harvestSettlements = pgTable("harvest_settlements", {
     .notNull()
     .references(() => accounts.id),
   paidDate: date("paid_date"),
-  // Drive link to the Liquidación PDF artifact.
+  // Drive link to the processor report PDF.
   pdfUrl: text("pdf_url"),
   // Free-text waste reasons: "daños en la corteza, manchas amarillas, …"
   wasteObservations: text("waste_observations"),

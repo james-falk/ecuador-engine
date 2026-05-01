@@ -34,6 +34,11 @@ export const people = pgTable("people", {
   companyIds: uuid("company_ids").array(),
   primaryEmail: text("primary_email"),
   altEmails: text("alt_emails").array(),
+  // Login email — distinct from primaryEmail (which is the contact email
+  // for external comms). Set only for internal team members who need to
+  // sign in. Nullable; uniqueness enforced via lower() index.
+  email: text("email"),
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   primaryPhone: text("primary_phone"),
   whatsapp: text("whatsapp"),
   country: text("country"),

@@ -55,7 +55,6 @@ const SHEET_PATH = (() => {
 const SHEET_TAB_NAME = "Weekly Payments"; // when reading xlsx; CSV is single-tab
 const SOURCE_PREFIX = "master_sheet:";
 const ACCOUNT_SLUG = "finca-ec";
-const PROCESSOR_NAME = "INCALPACK"; // default processor for backfill harvests
 const DRY_RUN = process.argv.includes("--dry-run");
 
 const YEAR_FILTER: number | null = (() => {
@@ -656,15 +655,10 @@ async function main() {
     console.error(`Account "${ACCOUNT_SLUG}" not found. Run pnpm db:seed first.`);
     process.exit(1);
   }
-  const [processor] = await db
-    .select({ id: companies.id })
-    .from(companies)
-    .where(eq(companies.name, PROCESSOR_NAME))
-    .limit(1);
-  if (!processor) {
-    console.error(`Processor "${PROCESSOR_NAME}" not found. Run pnpm db:seed first.`);
-    process.exit(1);
-  }
+  // No processor lookup. The master sheet's "Harvest payments received"
+  // column doesn't say which processor sent the money, so we leave it null
+  // for the historical entries. Going forward, manual entries via the UI
+  // capture the processor explicitly.
 
   const yearFrom = YEAR_FILTER !== null ? `${YEAR_FILTER}-01-01` : null;
   const yearTo = YEAR_FILTER !== null ? `${YEAR_FILTER}-12-31` : null;
@@ -729,10 +723,10 @@ async function main() {
         .values({
           harvestDate: rec.date,
           weekStartDate: rec.weekStartDate,
-          processorCompanyId: processor.id,
+          processorCompanyId: null, // unattributed; master-sheet doesn't name the processor
           lotNumber: source,
           kgDelivered: "0",
-          notes: "Backfilled from master sheet — kg + grade detail TBD from Liquidación PDF.",
+          notes: "Backfilled from master sheet — processor unattributed; kg + grade detail TBD.",
         })
         .returning({ id: harvests.id });
       await db.insert(harvestSettlements).values({

@@ -49,7 +49,7 @@ export default async function IncomePage({
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <Topbar
-        crumbs={["Income", String(year)]}
+        crumbs={["Income sheet", String(year)]}
         right={
           <span className="mono" style={{ fontSize: 11, color: "var(--text-3)" }}>
             net {formatUsdShort(summary.netUsd)}
@@ -60,7 +60,7 @@ export default async function IncomePage({
         <div className="ee-page-pad" style={{ maxWidth: 1180, margin: "0 auto" }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 24, marginBottom: 16, flexWrap: "wrap" }}>
             <h1 style={{ font: "500 22px/1.1 var(--font-display)", letterSpacing: "-0.02em", margin: 0 }}>
-              Income
+              Income sheet
             </h1>
             <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
               Money in, money out — and when fruit is worth the most.

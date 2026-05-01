@@ -4,7 +4,6 @@ import {
   index,
   pgEnum,
   pgTable,
-  smallint,
   text,
   timestamp,
   uuid,
@@ -21,6 +20,10 @@ export const taskStatusEnum = pgEnum("task_status", [
   "done",
   "archived",
 ]);
+
+// Three-value priority. Stored as enum so the UI can render a fixed pill set
+// (low/medium/high) and we don't have to interpret arbitrary integers.
+export const taskPriorityEnum = pgEnum("task_priority", ["low", "medium", "high"]);
 
 // Free-form, lightweight task table. Drives the Pending Items pillar.
 // A task can be standalone (just a title), or anchored to a person + company
@@ -49,9 +52,11 @@ export const tasks = pgTable(
     // Free-form tags. Lowercase by convention. Used for filtering chips.
     tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     dueDate: date("due_date"),
-    // Higher integer = more urgent. Lets us sort overdue/high-priority first
-    // without ordering by status text.
-    priority: smallint("priority").notNull().default(0),
+    // low / medium / high. Sort order in queries: high first.
+    priority: taskPriorityEnum("priority").notNull().default("medium"),
+    // When status='blocked', why. Free text so the operator can write
+    // "waiting on Tim Forrest" or "needs Drive PDF" without dropdowns.
+    blockedReason: text("blocked_reason"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .default(sql`now()`),
@@ -62,6 +67,12 @@ export const tasks = pgTable(
     // Provenance. "manual" for user-created; reserved for future ingest
     // sources (e.g. compliance_items reflux, master_sheet derivations).
     source: text("source"),
+    // Who last mutated this row (person_id). Set by server actions from
+    // the active session. Null when the actor isn't signed in (legacy or
+    // unauth flows).
+    lastTouchedByPersonId: uuid("last_touched_by_person_id").references(() => people.id, {
+      onDelete: "set null",
+    }),
   },
   (t) => ({
     // Partial: only index OPEN/in_progress/blocked rows; done/archived stop

@@ -16,8 +16,8 @@ import { getHarvestFeed, getHarvestStats } from "@/lib/queries/harvests";
 
 const YEARS = [2022, 2023, 2024, 2025, 2026];
 
-type TabKey = "farm" | "reports";
-const VALID_TABS: TabKey[] = ["farm", "reports"];
+type TabKey = "farm" | "reports" | "payments";
+const VALID_TABS: TabKey[] = ["farm", "reports", "payments"];
 
 export default async function HarvestsPage({
   searchParams,

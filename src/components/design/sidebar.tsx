@@ -19,10 +19,18 @@ const PILLARS: Pillar[] = [
   { id: "selling",  label: "Selling",       icon: "tag",   href: "/selling" },
   { id: "harvests", label: "Harvests",      icon: "leaf",  href: "/harvests" },
   { id: "expenses", label: "Expenses",      icon: "coin",  href: "/expenses" },
-  { id: "income",   label: "Income",        icon: "spark", href: "/income" },
+  { id: "income",   label: "Income sheet",  icon: "spark", href: "/income" },
 ];
 
-export function Sidebar({ dense = false, entities }: { dense?: boolean; entities: Entity[] }) {
+export function Sidebar({
+  dense = false,
+  entities,
+  currentUser = null,
+}: {
+  dense?: boolean;
+  entities: Entity[];
+  currentUser?: { name: string; email: string | null } | null;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [companiesOpen, setCompaniesOpen] = React.useState(true);
@@ -80,30 +88,47 @@ export function Sidebar({ dense = false, entities }: { dense?: boolean; entities
             <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
           ))}
 
-          <button
-            onClick={() => setCompaniesOpen((v) => !v)}
+          {/* Label clicks navigate to /companies index; chevron toggles the expanded list. */}
+          <div
             style={{
               display: "grid",
-              gridTemplateColumns: "14px 1fr 12px",
+              gridTemplateColumns: "14px 1fr 22px",
               alignItems: "center",
               gap: 10,
               padding: "6px 12px",
               borderRadius: 6,
-              border: 0,
-              background: "transparent",
+              background: isActive("/companies") && !activeCompanySlug ? "var(--bg-3)" : "transparent",
               color: "var(--text-1)",
-              cursor: "pointer",
-              textAlign: "left",
               fontSize: 12.5,
-              fontWeight: 400,
+              cursor: "pointer",
             }}
           >
             <Icon name="box" size={13} color="var(--text-2)" />
-            <span>Companies</span>
-            <span style={{ transform: companiesOpen ? "rotate(90deg)" : "rotate(0)", transition: "transform 160ms", display: "inline-flex" }}>
+            <button
+              type="button"
+              onClick={() => router.push("/companies")}
+              style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer", color: "inherit", textAlign: "left", fontSize: "inherit" }}
+            >
+              Companies
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompaniesOpen((v) => !v)}
+              aria-label={companiesOpen ? "Collapse" : "Expand"}
+              style={{
+                background: "transparent",
+                border: 0,
+                padding: 0,
+                cursor: "pointer",
+                display: "inline-flex",
+                justifyContent: "flex-end",
+                transform: companiesOpen ? "rotate(90deg)" : "rotate(0)",
+                transition: "transform 160ms",
+              }}
+            >
               <Icon name="chev" size={10} color="var(--text-3)" />
-            </span>
-          </button>
+            </button>
+          </div>
           {companiesOpen && (
             <div style={{ display: "flex", flexDirection: "column", paddingLeft: 22, gap: 1, marginBottom: 4 }}>
               {entities.map((e) => {
@@ -146,11 +171,37 @@ export function Sidebar({ dense = false, entities }: { dense?: boolean; entities
 
       <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 8, marginTop: 8 }}>
         <NavRow
+          active={isActive("/drive")}
+          icon="file"
+          label="Drive"
+          onClick={() => router.push("/drive")}
+        />
+        <NavRow
           active={isActive("/admin/google-auth")}
           icon="shield"
           label="Google auth"
           onClick={() => router.push("/admin/google-auth")}
         />
+        {currentUser && (
+          <form action="/api/auth/logout" method="post" style={{ padding: "6px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 11, color: "var(--text-3)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {currentUser.name}
+            </span>
+            <button
+              type="submit"
+              style={{
+                background: "transparent",
+                border: 0,
+                color: "var(--text-3)",
+                fontSize: 11,
+                cursor: "pointer",
+                padding: 0,
+              }}
+            >
+              Sign out
+            </button>
+          </form>
+        )}
       </div>
     </aside>
   );

@@ -54,8 +54,8 @@ export function ExpenseTabs({
       >
         {(
           [
-            { id: "entry", label: "Data Entry" },
             { id: "view", label: "View" },
+            { id: "entry", label: "Data Entry" },
             { id: "feed", label: `Feed · ${feed.length}` },
           ] as Array<{ id: Tab; label: string }>
         ).map((o) => (

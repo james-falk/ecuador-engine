@@ -182,33 +182,56 @@ async function OverviewTab({
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-        <Tile
-          label="Expenses paid to"
-          primary={overview.expenseCount === 0 ? "—" : formatUsd(overview.expenseTotalUsd)}
-          hint={`${overview.expenseCount} entries`}
-          tone="money-out"
-        />
-        <Tile
-          label="Harvest deliveries"
-          primary={overview.harvestCount === 0 ? "—" : String(overview.harvestCount)}
-          hint={`${overview.settlementsCount} settled · ${formatUsd(overview.settlementsTotalUsd)}`}
-          tone="money-in"
-        />
-        <Tile
-          label="US → EC wires"
-          primary={overview.capitalInCount === 0 ? "—" : formatUsd(overview.capitalInTotalUsd)}
-          hint={`${overview.capitalInCount} wires`}
-          tone="capital-in"
-        />
-        <Tile
-          label="EC → US wires"
-          primary={overview.capitalOutCount === 0 ? "—" : formatUsd(overview.capitalOutTotalUsd)}
-          hint={`${overview.capitalOutCount} wires`}
-          tone="capital-out"
-        />
-      </div>
-      <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>
-        Year-bounded snapshot for {entityName}. Counterparty match on cash movements is loose-text — accuracy improves once we add a hard FK on the wires table.
+        {overview.expenseCount > 0 && (
+          <Tile
+            label="Expenses paid to"
+            primary={formatUsd(overview.expenseTotalUsd)}
+            hint={`${overview.expenseCount} entries`}
+            tone="money-out"
+          />
+        )}
+        {overview.harvestCount > 0 && (
+          <Tile
+            label="Harvest deliveries"
+            primary={String(overview.harvestCount)}
+            hint={`${overview.settlementsCount} settled · ${formatUsd(overview.settlementsTotalUsd)}`}
+            tone="money-in"
+          />
+        )}
+        {overview.capitalInCount > 0 && (
+          <Tile
+            label="US → EC wires"
+            primary={formatUsd(overview.capitalInTotalUsd)}
+            hint={`${overview.capitalInCount} wires`}
+            tone="capital-in"
+          />
+        )}
+        {overview.capitalOutCount > 0 && (
+          <Tile
+            label="EC → US wires"
+            primary={formatUsd(overview.capitalOutTotalUsd)}
+            hint={`${overview.capitalOutCount} wires`}
+            tone="capital-out"
+          />
+        )}
+        {overview.expenseCount === 0 &&
+          overview.harvestCount === 0 &&
+          overview.capitalInCount === 0 &&
+          overview.capitalOutCount === 0 && (
+            <div
+              style={{
+                gridColumn: "1 / -1",
+                padding: "32px 18px",
+                textAlign: "center",
+                color: "var(--text-3)",
+                fontSize: 12.5,
+                border: "1px dashed var(--line-soft)",
+                borderRadius: 10,
+              }}
+            >
+              No activity recorded for {entityName} in this window.
+            </div>
+          )}
       </div>
     </div>
   );
@@ -383,9 +406,10 @@ async function DocumentsTab({ companyId }: { companyId: string }) {
     );
   }
   const sourceLabel: Record<string, string> = {
-    harvest_settlement: "Liquidación",
-    harvest_evidence: "Delivery evidence",
+    harvest_settlement: "Report",
+    harvest_evidence: "Delivery",
     compliance: "Compliance",
+    pinned: "Pinned",
   };
   return (
     <div style={{ border: "1px solid var(--line-soft)", borderRadius: 10, overflow: "hidden" }}>

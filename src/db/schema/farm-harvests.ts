@@ -35,6 +35,11 @@ export const farmHarvests = pgTable("farm_harvests", {
   // Buckets of fruit picked. The primary operational unit. Optional for
   // flower-only entries (counting flowers before fruit forms).
   bucketCount: integer("bucket_count"),
+  // Optional flowers-picked pre-stage. Some operators count flowers (and
+  // sometimes pick them off to manage the load) weeks before the fruit
+  // ripens. Storing this on the same row keeps it one event, not two.
+  flowersPickedDate: date("flowers_picked_date"),
+  flowersPickedCount: integer("flowers_picked_count"),
   // Free-form context (which lots, weather, anything noteworthy).
   notes: text("notes"),
   // Soft tag of who recorded it (Isaac, James, etc.). Free text for now;

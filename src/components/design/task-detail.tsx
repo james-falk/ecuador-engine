@@ -7,6 +7,7 @@ import * as React from "react";
 import {
   type TaskRow,
   type TaskStatus,
+  type TaskPriority,
 } from "@/lib/queries/tasks";
 import { createTask, updateTask, completeTask, reopenTask, deleteTask } from "@/lib/actions/tasks";
 import { Icon } from "./icons";
@@ -22,12 +23,18 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
 };
 
-const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string }> = [
-  { value: "open", label: "Open" },
-  { value: "in_progress", label: "In progress" },
-  { value: "blocked", label: "Blocked" },
-  { value: "done", label: "Done" },
-  { value: "archived", label: "Archived" },
+const STATUS_OPTIONS: Array<{ value: TaskStatus; label: string; color: string }> = [
+  { value: "open",        label: "Open",        color: "var(--text-2)" },
+  { value: "in_progress", label: "In progress", color: "var(--sky)" },
+  { value: "blocked",     label: "Blocked",     color: "var(--rose)" },
+  { value: "done",        label: "Done",        color: "var(--green)" },
+  { value: "archived",    label: "Archived",    color: "var(--text-3)" },
+];
+
+const PRIORITY_OPTIONS: Array<{ value: TaskPriority; label: string; color: string }> = [
+  { value: "low",    label: "Low",    color: "var(--text-3)" },
+  { value: "medium", label: "Medium", color: "var(--sky)" },
+  { value: "high",   label: "High",   color: "var(--rose)" },
 ];
 
 type Option = { id: string; name: string };
@@ -51,7 +58,8 @@ export function TaskDetail({
   const [relatedCompanyId, setRelatedCompanyId] = React.useState<string>(item?.relatedCompanyId ?? "");
   const [tagsInput, setTagsInput] = React.useState((item?.tags ?? []).join(", "));
   const [dueDate, setDueDate] = React.useState(item?.dueDate ?? "");
-  const [priority, setPriority] = React.useState<number>(item?.priority ?? 0);
+  const [priority, setPriority] = React.useState<TaskPriority>(item?.priority ?? "medium");
+  const [blockedReason, setBlockedReason] = React.useState(item?.blockedReason ?? "");
   const [isPending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
 
@@ -60,6 +68,10 @@ export function TaskDetail({
     const trimmed = title.trim();
     if (!trimmed) {
       setError("Title is required");
+      return;
+    }
+    if (status === "blocked" && !blockedReason.trim()) {
+      setError("Blocked tasks need a reason.");
       return;
     }
     const payload = {
@@ -71,6 +83,7 @@ export function TaskDetail({
       tags: tagsInput,
       dueDate: dueDate || null,
       priority,
+      blockedReason: blockedReason.trim() || null,
     };
     startTransition(async () => {
       const r = isCreate
@@ -162,29 +175,30 @@ export function TaskDetail({
         </Field>
 
         <Field label="Status">
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {STATUS_OPTIONS.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                onClick={() => setStatus(s.value)}
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: 8,
-                  border: status === s.value ? "1px solid var(--green)" : "1px solid var(--line-soft)",
-                  background: status === s.value ? "var(--green-glow)" : "var(--bg-3)",
-                  color: status === s.value ? "var(--green)" : "var(--text-2)",
-                  fontSize: 11.5,
-                  fontFamily: "var(--font-mono)",
-                  letterSpacing: "0.04em",
-                  textTransform: "uppercase",
-                  cursor: "pointer",
-                }}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
+          <Pills
+            options={STATUS_OPTIONS}
+            value={status}
+            onChange={(v) => setStatus(v as TaskStatus)}
+          />
+        </Field>
+
+        {status === "blocked" && (
+          <Field label="Blocked reason" hint="Why is this stuck? Required when status=blocked.">
+            <input
+              value={blockedReason}
+              onChange={(e) => setBlockedReason(e.target.value)}
+              placeholder="Waiting on Tim Forrest…"
+              style={inputStyle}
+            />
+          </Field>
+        )}
+
+        <Field label="Priority">
+          <Pills
+            options={PRIORITY_OPTIONS}
+            value={priority}
+            onChange={(v) => setPriority(v as TaskPriority)}
+          />
         </Field>
 
         <Field label="Assignee">
@@ -215,26 +229,15 @@ export function TaskDetail({
           />
         </Field>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field label="Due date">
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="mono"
-              style={inputStyle}
-            />
-          </Field>
-          <Field label="Priority" hint="Higher = more urgent.">
-            <input
-              type="number"
-              value={priority}
-              onChange={(e) => setPriority(Number(e.target.value) || 0)}
-              className="mono num"
-              style={inputStyle}
-            />
-          </Field>
-        </div>
+        <Field label="Due date">
+          <input
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className="mono"
+            style={inputStyle}
+          />
+        </Field>
       </div>
 
       <div
@@ -280,6 +283,45 @@ export function TaskDetail({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function Pills<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: T; label: string; color: string }>;
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            style={{
+              padding: "6px 12px",
+              borderRadius: 8,
+              border: `1px solid ${active ? o.color : "var(--line-soft)"}`,
+              background: active ? `oklch(from ${o.color} l c h / 0.15)` : "var(--bg-3)",
+              color: active ? o.color : "var(--text-2)",
+              fontSize: 11.5,
+              fontFamily: "var(--font-mono)",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            {o.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

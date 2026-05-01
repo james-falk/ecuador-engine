@@ -36,7 +36,7 @@ export default async function ExpensesPage({
   })();
   const filters = year !== null ? { from: `${year}-01-01`, to: `${year}-12-31` } : {};
 
-  const tab: TabKey = VALID_TABS.includes(params.tab as TabKey) ? (params.tab as TabKey) : "entry";
+  const tab: TabKey = VALID_TABS.includes(params.tab as TabKey) ? (params.tab as TabKey) : "view";
   const weekParam =
     params.week && /^\d{4}-\d{2}-\d{2}$/.test(params.week) ? params.week : mostRecentSunday();
 

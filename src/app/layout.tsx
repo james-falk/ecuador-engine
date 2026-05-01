@@ -7,6 +7,7 @@ import { DrawerHost } from "@/components/design/drawer-host";
 import { getOwnedEntities } from "@/lib/queries/compliance";
 import { getDefaultAccountId } from "@/lib/queries/accounts";
 import { getTaskAssigneeOptions, getTaskCompanyOptions } from "@/lib/queries/tasks";
+import { getCurrentPerson } from "@/lib/auth/session";
 import "./globals.css";
 
 const interTight = Inter_Tight({ subsets: ["latin"], variable: "--font-inter-tight", display: "swap" });
@@ -42,12 +43,16 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // options once per render. Client components below receive these as plain
   // props (the task drawer, in particular, lives in DrawerHost and needs
   // assignee/company dropdown data on first render of any page).
-  const [entities, defaultAccountId, taskAssignees, taskCompanies] = await Promise.all([
+  const [entities, defaultAccountId, taskAssignees, taskCompanies, currentPerson] = await Promise.all([
     getOwnedEntities(),
     getDefaultAccountId(),
     getTaskAssigneeOptions(),
     getTaskCompanyOptions(),
+    getCurrentPerson(),
   ]);
+  const currentUser = currentPerson
+    ? { name: currentPerson.name, email: currentPerson.email }
+    : null;
 
   return (
     <html lang="en" data-theme="dark" className={`${interTight.variable} ${jetbrainsMono.variable}`}>
@@ -58,7 +63,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <DrawerProvider>
           <div className="ee-shell">
             <MobileShell>
-              <Sidebar entities={entities} />
+              <Sidebar entities={entities} currentUser={currentUser} />
             </MobileShell>
             <main className="ee-main" style={{ display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
               {children}

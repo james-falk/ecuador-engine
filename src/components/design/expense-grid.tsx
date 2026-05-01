@@ -1,14 +1,11 @@
-// Weekly grid: rows = weeks (newest first), columns = category types,
-// gross at the right edge of each row.
-//
-// Trimmed for the narrowed /expenses page: the In / Net / US-in / US-out
-// columns moved to the Income page (cross-pillar money view). This grid is
-// strictly expenses-out.
+// Weekly grid: rows = weeks (newest first), columns = master-sheet labels
+// (Water / Jornales / Chavito / Engineer / Isaac / Other …) with a Total at
+// the right edge. The Other column shows its note inline below the amount.
 //
 // Server component — pure presentational, click-free. To open a row's
 // details, the Feed tab is the entry point.
 
-import { CATEGORY_LABEL, type WeeklyGrid } from "@/lib/queries/expenses";
+import type { WeeklyGrid } from "@/lib/queries/expenses";
 import { formatUsdShort } from "@/lib/money";
 
 export function ExpenseGrid({ grid }: { grid: WeeklyGrid }) {
@@ -20,8 +17,8 @@ export function ExpenseGrid({ grid }: { grid: WeeklyGrid }) {
     );
   }
 
-  // Column layout: week | one fr per category | gross
-  const cols = `120px ${grid.categories.map(() => "1fr").join(" ")} 100px`;
+  // Column layout: week | one fr per label | total
+  const cols = `120px ${grid.columns.map(() => "1fr").join(" ")} 100px`;
 
   return (
     <div className="ee-grid-scroll">
@@ -42,8 +39,8 @@ export function ExpenseGrid({ grid }: { grid: WeeklyGrid }) {
           }}
         >
           <span>Week of</span>
-          {grid.categories.map((c) => (
-            <span key={c} style={{ textAlign: "right" }}>{CATEGORY_LABEL[c]}</span>
+          {grid.columns.map((c) => (
+            <span key={c} style={{ textAlign: "right" }}>{c}</span>
           ))}
           <span style={{ textAlign: "right", color: "var(--amber)" }}>Total</span>
         </div>
@@ -58,27 +55,53 @@ export function ExpenseGrid({ grid }: { grid: WeeklyGrid }) {
               padding: "12px 14px",
               borderTop: i === 0 ? 0 : "1px solid var(--line-soft)",
               fontSize: 12.5,
-              alignItems: "center",
+              alignItems: "start",
             }}
           >
-            <span className="mono" style={{ color: "var(--text-1)" }}>{w.weekStartDate}</span>
-            {grid.categories.map((c) => {
-              const v = Number(w.byCategory[c]);
+            <span className="mono" style={{ color: "var(--text-1)", paddingTop: 2 }}>{w.weekStartDate}</span>
+            {grid.columns.map((c) => {
+              const cell = w.byColumn[c];
+              const v = Number(cell?.amount ?? "0");
               return (
                 <span
                   key={c}
-                  className="mono num"
                   style={{
                     textAlign: "right",
-                    color: v > 0 ? "var(--text-1)" : "var(--text-3)",
-                    fontVariantNumeric: "tabular-nums",
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-end",
+                    gap: 2,
                   }}
                 >
-                  {v > 0 ? formatUsdShort(v) : "—"}
+                  <span
+                    className="mono num"
+                    style={{
+                      color: v > 0 ? "var(--text-1)" : "var(--text-3)",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {v > 0 ? formatUsdShort(v) : "—"}
+                  </span>
+                  {cell?.note && v > 0 && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: "var(--text-3)",
+                        textAlign: "right",
+                        maxWidth: "100%",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={cell.note}
+                    >
+                      {cell.note}
+                    </span>
+                  )}
                 </span>
               );
             })}
-            <span className="mono num money-out" style={{ textAlign: "right", fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>
+            <span className="mono num money-out" style={{ textAlign: "right", fontWeight: 500, fontVariantNumeric: "tabular-nums", paddingTop: 2 }}>
               {formatUsdShort(w.gross)}
             </span>
           </div>

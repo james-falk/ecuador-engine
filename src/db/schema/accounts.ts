@@ -3,7 +3,7 @@ import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 // Bank / cash accounts the engine tracks money flowing into and out of.
 // v1 ships with a single seeded account: the Finca del Dragón Ecuadorian bank
-// account, which receives Liquidación net pay AND pays out worker payments.
+// account, which receives processor net pay AND pays out worker payments.
 // When a second account appears (Enigma US, Isaac float, James personal), that
 // is the trigger for adding a `cash_movements` table to model transfers.
 export const accounts = pgTable("accounts", {

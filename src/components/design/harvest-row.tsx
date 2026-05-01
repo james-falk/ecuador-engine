@@ -39,7 +39,9 @@ export function HarvestRow({ item, isFirst }: { item: HarvestRowType; isFirst: b
         Lot {item.lotNumber ?? "—"}
       </span>
       <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-        <span style={{ fontSize: 13, fontWeight: 500 }}>{item.processorName}</span>
+        <span style={{ fontSize: 13, fontWeight: 500, color: item.processorName ? "var(--text-0)" : "var(--text-3)" }}>
+          {item.processorName ?? "Unattributed"}
+        </span>
         <span className="mono" style={{ fontSize: 10.5, color: statusColor, letterSpacing: "0.06em", textTransform: "uppercase" }}>
           {statusLabel}
           {item.settlement && (

@@ -193,11 +193,11 @@ export function HarvestDetail({
 
         {/* SETTLEMENT */}
         <Section
-          title="Liquidación settlement"
+          title="Settlement"
           right={
             !s ? (
               <span className="mono" style={{ fontSize: 10, color: "var(--amber)", letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                Awaiting Liquidación
+                Awaiting report
               </span>
             ) : null
           }
