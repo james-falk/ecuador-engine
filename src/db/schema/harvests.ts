@@ -37,6 +37,10 @@ export const harvests = pgTable("harvests", {
   notes: text("notes"),
   // Optional Drive link to the delivery slip / photo from Isaac.
   evidenceUrl: text("evidence_url"),
+  // Optional link to a farm_harvest (picking event). v1 is 1:1; if a
+  // delivery aggregates buckets from multiple farm_harvest events, we
+  // add a junction table later. NULL = unlinked or pre-feature data.
+  farmHarvestId: uuid("farm_harvest_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   lastTouchedAt: timestamp("last_touched_at", { withTimezone: true }),

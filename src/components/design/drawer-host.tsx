@@ -42,7 +42,7 @@ export function DrawerHost({
         {isEntity && <EntityDetail entityId={state.entityId} onClose={close} />}
       </Drawer>
       <Drawer open={isExpense} onClose={close}>
-        {isExpense && <ExpenseDetail item={state.item} onClose={close} />}
+        {isExpense && <ExpenseDetail item={state.item} mode={state.mode} onClose={close} />}
       </Drawer>
       <Drawer open={isHarvest} onClose={close} width={520}>
         {isHarvest && defaultAccountId && (

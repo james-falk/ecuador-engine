@@ -5,6 +5,7 @@
 # Bash permission rules; never commit
 .claude/settings.json
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Node / Next.js
 node_modules/

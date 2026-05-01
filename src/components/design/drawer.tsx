@@ -19,7 +19,7 @@ type DrawerState =
   | { kind: "none" }
   | { kind: "compliance"; item: ComplianceItem }
   | { kind: "entity"; entityId: string }
-  | { kind: "expense"; item: ExpenseRow }
+  | { kind: "expense"; item: ExpenseRow; mode: "view" | "edit" }
   | { kind: "harvest"; item: HarvestRow }
   | { kind: "cashMovement"; item: CashMovementRow }
   | { kind: "task"; item: TaskRow | null };
@@ -28,7 +28,11 @@ type DrawerContextValue = {
   state: DrawerState;
   openCompliance: (item: ComplianceItem) => void;
   openEntity: (entityId: string) => void;
+  // openExpense always opens in view mode now (the Data Entry tab is the
+  // edit pathway). Edit mode is reserved for explicit admin / data-fix
+  // workflows in the future.
   openExpense: (item: ExpenseRow) => void;
+  openExpenseEdit: (item: ExpenseRow) => void;
   openHarvest: (item: HarvestRow) => void;
   openCashMovement: (item: CashMovementRow) => void;
   openTask: (item: TaskRow) => void;
@@ -51,7 +55,8 @@ export function DrawerProvider({ children }: { children: React.ReactNode }) {
       state,
       openCompliance: (item) => setState({ kind: "compliance", item }),
       openEntity: (entityId) => setState({ kind: "entity", entityId }),
-      openExpense: (item) => setState({ kind: "expense", item }),
+      openExpense: (item) => setState({ kind: "expense", item, mode: "view" }),
+      openExpenseEdit: (item) => setState({ kind: "expense", item, mode: "edit" }),
       openHarvest: (item) => setState({ kind: "harvest", item }),
       openCashMovement: (item) => setState({ kind: "cashMovement", item }),
       openTask: (item) => setState({ kind: "task", item }),

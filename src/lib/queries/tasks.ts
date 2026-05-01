@@ -152,10 +152,17 @@ export async function getTaskAssigneeOptions(): Promise<Array<{ id: string; name
   return rows;
 }
 
+// Companies dropdown filter: only the operating entities James and Peter
+// actually run (producer + importer). External companies (processors,
+// carriers, buyers, lawyers, etc.) live in the same table but don't make
+// sense as "related company" on internal tasks.
+const INTERNAL_COMPANY_KINDS = ["producer", "importer"] as const;
+
 export async function getTaskCompanyOptions(): Promise<Array<{ id: string; name: string; slug: string | null }>> {
   const rows = await db
     .select({ id: companies.id, name: companies.name, slug: companies.slug })
     .from(companies)
+    .where(inArray(companies.kind, INTERNAL_COMPANY_KINDS as unknown as (typeof companies.kind.enumValues)[number][]))
     .orderBy(asc(companies.name));
   return rows;
 }

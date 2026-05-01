@@ -9,7 +9,7 @@ type Pillar = { id: string; label: string; icon: IconName; href: string };
 
 // Pillar order: items above Companies render first via slice(0, COMPANIES_INSERT),
 // Companies expandable group renders next, items below render last via slice(COMPANIES_INSERT).
-// Final shape (top → bottom): Home / Pending Items / Globe / Companies / Selling / Harvests / Expenses.
+// Final shape (top → bottom): Home / Pending Items / Globe / Companies / Selling / Harvests / Expenses / Income.
 const COMPANIES_INSERT = 3;
 const PILLARS: Pillar[] = [
   { id: "home",     label: "Home",          icon: "home",  href: "/" },
@@ -19,6 +19,7 @@ const PILLARS: Pillar[] = [
   { id: "selling",  label: "Selling",       icon: "tag",   href: "/selling" },
   { id: "harvests", label: "Harvests",      icon: "leaf",  href: "/harvests" },
   { id: "expenses", label: "Expenses",      icon: "coin",  href: "/expenses" },
+  { id: "income",   label: "Income",        icon: "spark", href: "/income" },
 ];
 
 export function Sidebar({ dense = false, entities }: { dense?: boolean; entities: Entity[] }) {
@@ -142,6 +143,15 @@ export function Sidebar({ dense = false, entities }: { dense?: boolean; entities
       </div>
 
       <div style={{ flex: 1 }} />
+
+      <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 8, marginTop: 8 }}>
+        <NavRow
+          active={isActive("/admin/google-auth")}
+          icon="shield"
+          label="Google auth"
+          onClick={() => router.push("/admin/google-auth")}
+        />
+      </div>
     </aside>
   );
 }

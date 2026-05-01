@@ -7,6 +7,8 @@ export * from "./people";
 export * from "./compliance";
 export * from "./accounts";
 export * from "./harvests";
+export * from "./farm-harvests";
 export * from "./expenses";
 export * from "./cash-movements";
 export * from "./tasks";
+export * from "./oauth-tokens";
