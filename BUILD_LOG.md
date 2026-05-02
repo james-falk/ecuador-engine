@@ -17,16 +17,21 @@ If a build night's task touches external-facing content or claims, agent must re
 
 Build in order. One item per night. If too big, split + document the split.
 
+> **Scope directive (2026-05-02, James-tagged):** Focus the nightly agent on market data, buyer sourcing, and B2B account-creation work. James is building the UI/page-structure items himself in Claude. Items tagged `DEFERRED — UI; James scope` are SKIPPED by the autonomous build. The agent picks the lowest-numbered `[ ]` item that does **not** contain the word `DEFERRED`. Also: any work that needs Drive content should go through the existing `/api/drive/list` endpoint (Google OAuth on jamesfalk4@gmail.com is wired — see `scripts/google-oauth-setup.md`) rather than building a parallel Drive client.
+
 1. [x] **Schema migration: `pricing_snapshots`, `lead_proposals`, `lead_contact_history`** — run `pnpm drizzle-kit generate`. Tables described in `## Schema additions` below. Apply migration. Smoke test = `pnpm tsx scripts/check-tables.ts` confirms new tables exist. (built 2026-05-02)
 2. [x] **Market-intel agent — USDA AMS source** — `src/lib/agents/market-intel/sources/usda-ams.ts` + entrypoint `src/lib/agents/market-intel/run.ts` + API route `src/app/api/agents/market-intel/route.ts`. Pulls the 5 USDA AMS PDFs (National FOB, NY/Philly/Miami/LA terminals) + parses dragon fruit lines + writes to `pricing_snapshots`. Smoke test = run handler in test mode, confirm at least 1 row written or "no fresh USDA post today" gracefully handled. (built 2026-05-02)
 3. [ ] **Market-intel agent — customs manifest source** — add ImportYeti (or equivalent public manifest) source plugin reading dragon fruit US import shipments. Same API route, additional source. Smoke test = at least 1 import record parsed + stored OR upstream-down handled gracefully.
-4. [ ] **`/pricing` market-snapshot card** — UI on existing `/pricing` page rendering latest 30d trend from `pricing_snapshots` (terminal market price ranges + Ecuador-origin filter + day-over-day delta). No styling overhaul on existing pricing UI; additive card only.
+4. [ ] **DEFERRED — UI; James scope** — `/pricing` market-snapshot card. (Originally: UI on existing `/pricing` page rendering latest 30d trend from `pricing_snapshots`.) James handles this in his own Claude session.
 5. [ ] **Buyer-scout core + dedupe** — `src/lib/agents/buyer-scout/run.ts` + `src/lib/agents/buyer-scout/dedupe.ts` + API route `src/app/api/agents/buyer-scout/route.ts`. Lead discovery starts with customs manifest data (highest-signal source — see who's actually importing now). Writes to `lead_proposals` with status=`proposed`. Dedupe MUST check across BOTH `buyers` AND `lead_proposals` before insert. Smoke test = run with a fixture, confirm dedupe rejects duplicates.
 6. [ ] **Buyer-scout — distributor directory source** — config-driven list of distributor URLs (Frieda's Specialty Produce, Melissa's, Frieda's, etc. — start with 3-5; James to expand later). Headless scrape (Playwright) parses contact info, writes lead_proposals. Smoke test = fixture HTML + parser produces N expected lead_proposal rows.
 7. [ ] **Buyer-scout — wholesale market source** — Hunts Point NY, LA Wholesale Produce Market, Philadelphia produce terminal directories. Same pattern as #6.
 8. [ ] **Buyer-scout — Asian-American grocery chain procurement contacts** — H Mart, 99 Ranch, Patel Brothers, etc. Likely needs computer-use fallback for sites without easy scrape paths; flag if Playwright fails and queue Computer Use API for that subset.
-9. [ ] **`/buyers/proposed` UI surface** — list `lead_proposals` with score + evidence excerpt + source + approve/reject buttons. Approve = migrate row to `buyers` table (status=`ready_for_outreach`, but DO NOT auto-trigger outreach since Agent 3 is blocked); reject = update status, keep row for dedupe history.
+9. [ ] **DEFERRED — UI; James scope** — `/buyers/proposed` UI surface. (Originally: list `lead_proposals` with approve/reject buttons; approve migrates row to `buyers` table.) James handles this in his own Claude session.
 10. [ ] **Cron wiring** — Vercel cron config (`vercel.json` crons array) hitting `/api/agents/market-intel` daily 06:00 UTC and `/api/agents/buyer-scout` daily 12:00 UTC. James will deploy; agent just commits the config.
+
+### NEW — added 2026-05-02 from James scope directive
+13. [ ] **B2B account-creation automation — Frieda's / Melissa's / wholesale portal signup** — Playwright scripts that fill the supplier/vendor application forms on 2-3 distributor portals (Frieda's, Melissa's Produce, plus one wholesale market vendor portal). Output: per-portal "draft application" JSON written to a new `b2b_account_applications` table (status=`draft`, never auto-submitted). Smoke test = fixture-driven form-fill verified with Playwright codegen. NOTE: agent NEVER submits — James reviews drafts and clicks submit himself. This honors the high-and-tight rule.
 
 ### BLOCKED / parked (do not build until unblocked)
 
@@ -89,6 +94,11 @@ Codex `--yolo` has a known failure mode: clean exit with no diff. Wrapper must t
 Success post stays short ("built X, smoke green, commit abc123"). Failure post is loud enough to catch in a morning scan.
 
 ## History (newest first — prepend new entries above existing)
+
+### 2026-05-02 — James scope directive + queue revision (manual edit)
+James asked the autonomous build to focus on market data, buyer sourcing, and B2B account creation. He's handling UI work himself in his own Claude session. Items #4 (`/pricing` card) and #9 (`/buyers/proposed`) tagged `DEFERRED — UI; James scope`. Added new item #13: B2B account-creation automation (Playwright form-fill drafts, never auto-submitted — high-and-tight respected). Skip rule for cron: pick lowest-numbered `[ ]` that does NOT contain the word `DEFERRED`. Drive integration (jamesfalk4@gmail.com OAuth, `/api/drive/list`) noted at top of priority queue for future reference.
+
+signed-by: openclaw-umaga (manual edit, no codex/build run)
 
 ### 2026-05-02 — Item #2: Market-intel agent — USDA AMS source
 Built `src/lib/agents/market-intel/sources/usda-ams.ts` (MARS API fetch + dragon-fruit line extraction with test-fixture support for all 5 report configs), `src/lib/agents/market-intel/run.ts` (orchestrator with dedup-by-key logic, dry-run mode), and `src/app/api/agents/market-intel/route.ts` (POST → JSON `{ok, rowsWritten}`). Used USDA AMS MARS REST API (structured JSON) instead of PDF parsing — more reliable, no binary deps. Smoke test `scripts/smoke-market-intel.ts` exercises fixture fetching, Ecuador-row presence, no-price filtering, and agent dry-run; all 4 checks pass. `pnpm typecheck` passes clean.
