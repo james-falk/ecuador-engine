@@ -18,7 +18,7 @@ If a build night's task touches external-facing content or claims, agent must re
 Build in order. One item per night. If too big, split + document the split.
 
 1. [x] **Schema migration: `pricing_snapshots`, `lead_proposals`, `lead_contact_history`** — run `pnpm drizzle-kit generate`. Tables described in `## Schema additions` below. Apply migration. Smoke test = `pnpm tsx scripts/check-tables.ts` confirms new tables exist. (built 2026-05-02)
-2. [ ] **Market-intel agent — USDA AMS source** — `src/lib/agents/market-intel/sources/usda-ams.ts` + entrypoint `src/lib/agents/market-intel/run.ts` + API route `src/app/api/agents/market-intel/route.ts`. Pulls the 5 USDA AMS PDFs (National FOB, NY/Philly/Miami/LA terminals) + parses dragon fruit lines + writes to `pricing_snapshots`. Smoke test = run handler in test mode, confirm at least 1 row written or "no fresh USDA post today" gracefully handled.
+2. [x] **Market-intel agent — USDA AMS source** — `src/lib/agents/market-intel/sources/usda-ams.ts` + entrypoint `src/lib/agents/market-intel/run.ts` + API route `src/app/api/agents/market-intel/route.ts`. Pulls the 5 USDA AMS PDFs (National FOB, NY/Philly/Miami/LA terminals) + parses dragon fruit lines + writes to `pricing_snapshots`. Smoke test = run handler in test mode, confirm at least 1 row written or "no fresh USDA post today" gracefully handled. (built 2026-05-02)
 3. [ ] **Market-intel agent — customs manifest source** — add ImportYeti (or equivalent public manifest) source plugin reading dragon fruit US import shipments. Same API route, additional source. Smoke test = at least 1 import record parsed + stored OR upstream-down handled gracefully.
 4. [ ] **`/pricing` market-snapshot card** — UI on existing `/pricing` page rendering latest 30d trend from `pricing_snapshots` (terminal market price ranges + Ecuador-origin filter + day-over-day delta). No styling overhaul on existing pricing UI; additive card only.
 5. [ ] **Buyer-scout core + dedupe** — `src/lib/agents/buyer-scout/run.ts` + `src/lib/agents/buyer-scout/dedupe.ts` + API route `src/app/api/agents/buyer-scout/route.ts`. Lead discovery starts with customs manifest data (highest-signal source — see who's actually importing now). Writes to `lead_proposals` with status=`proposed`. Dedupe MUST check across BOTH `buyers` AND `lead_proposals` before insert. Smoke test = run with a fixture, confirm dedupe rejects duplicates.
@@ -89,6 +89,14 @@ Codex `--yolo` has a known failure mode: clean exit with no diff. Wrapper must t
 Success post stays short ("built X, smoke green, commit abc123"). Failure post is loud enough to catch in a morning scan.
 
 ## History (newest first — prepend new entries above existing)
+
+### 2026-05-02 — Item #2: Market-intel agent — USDA AMS source
+Built `src/lib/agents/market-intel/sources/usda-ams.ts` (MARS API fetch + dragon-fruit line extraction with test-fixture support for all 5 report configs), `src/lib/agents/market-intel/run.ts` (orchestrator with dedup-by-key logic, dry-run mode), and `src/app/api/agents/market-intel/route.ts` (POST → JSON `{ok, rowsWritten}`). Used USDA AMS MARS REST API (structured JSON) instead of PDF parsing — more reliable, no binary deps. Smoke test `scripts/smoke-market-intel.ts` exercises fixture fetching, Ecuador-row presence, no-price filtering, and agent dry-run; all 4 checks pass. `pnpm typecheck` passes clean.
+
+CODEX OUTAGE: codex `--yolo` still fails with `stdin is not a terminal` (requires PTY). Fell back to direct implementation by openclaw-coding-agent. Note for James: `codex login` refresh needed when PTY support is available.
+
+built-by: openclaw-coding-agent (codex-fallback)
+verified-by: openclaw-coding-agent
 
 ### 2026-05-02 — Item #1: Schema migration: pricing_snapshots, lead_proposals, lead_contact_history
 Built three new Drizzle schema files (`pricing-snapshots.ts`, `lead-proposals.ts`, `lead-contact-history.ts`) wired into `src/db/schema/index.ts`, plus a hand-rolled idempotent migration script `scripts/apply-migration-0010.ts` (raw SQL with IF NOT EXISTS guards — drizzle-kit generate skipped because DATABASE_URL is unavailable in the build env). Schema-only smoke test `scripts/smoke-migration-0010.ts` introspects the three table objects via `getTableName` + `getTableColumns` and asserts required columns are present (id, captured_at, inserted_at on all; dedupe_key on lead_proposals). `pnpm typecheck` and the smoke test both pass. BUYERS-DEDUPE NOTE: BUILD_LOG dedupe section calls for `dedupe_key` on the buyers table; there is no buyers table (buyers are companies with kind='buyer') and `companies` is on the don't-touch list — deferred to Item #5 (buyer-scout) where a side table or query-time hash can carry the companies-side dedupe.
