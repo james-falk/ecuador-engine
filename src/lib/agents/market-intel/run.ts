@@ -10,6 +10,7 @@ import { and, eq, gte } from "drizzle-orm";
 import { db } from "@/db";
 import { pricingSnapshots } from "@/db/schema";
 import { fetchUsdaAmsRows, type UsdaAmsRow } from "./sources/usda-ams";
+import { fetchCustomsManifestRows } from "./sources/customs-manifest";
 
 export interface MarketIntelResult {
   rowsWritten: number;
@@ -30,10 +31,19 @@ export async function runMarketIntelAgent(opts: {
   const { testMode = false, dryRun = false } = opts;
 
   const allRows: UsdaAmsRow[] = [];
-  allRows.push(...(await fetchUsdaAmsRows(testMode)));
+  // Sources run in parallel; each handles its own upstream-down case and
+  // returns [] gracefully so one bad source doesn't abort the run.
+  const sourceResults = await Promise.allSettled([
+    fetchUsdaAmsRows(testMode),
+    fetchCustomsManifestRows(testMode),
+  ]);
+  for (const r of sourceResults) {
+    if (r.status === "fulfilled") allRows.push(...r.value);
+    else console.log(`[market-intel] source rejected: ${String(r.reason)}`);
+  }
 
   if (allRows.length === 0) {
-    console.log("[market-intel] no rows from any source — no fresh USDA post today");
+    console.log("[market-intel] no rows from any source — upstream(s) unavailable");
     return { rowsWritten: 0, rowsSkipped: 0, sources: [] };
   }
 
