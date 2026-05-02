@@ -14,3 +14,6 @@ export * from "./tasks";
 export * from "./oauth-tokens";
 export * from "./entity-drive-files";
 export * from "./auth";
+export * from "./pricing-snapshots";
+export * from "./lead-proposals";
+export * from "./lead-contact-history";
