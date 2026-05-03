@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/design/sidebar";
 import { MobileShell } from "@/components/design/mobile-shell";
 import { DrawerProvider } from "@/components/design/drawer";
 import { DrawerHost } from "@/components/design/drawer-host";
+import { Providers } from "@/components/providers";
 import { getOwnedEntities } from "@/lib/queries/compliance";
 import { getDefaultAccountId } from "@/lib/queries/accounts";
 import { getTaskAssigneeOptions, getTaskCompanyOptions } from "@/lib/queries/tasks";
@@ -60,21 +61,23 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
       <body className="ee" style={{ margin: 0 }}>
-        <DrawerProvider>
-          <div className="ee-shell">
-            <MobileShell>
-              <Sidebar entities={entities} currentUser={currentUser} />
-            </MobileShell>
-            <main className="ee-main" style={{ display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
-              {children}
-            </main>
-          </div>
-          <DrawerHost
-            defaultAccountId={defaultAccountId}
-            taskAssignees={taskAssignees}
-            taskCompanies={taskCompanies.map((c) => ({ id: c.id, name: c.name }))}
-          />
-        </DrawerProvider>
+        <Providers>
+          <DrawerProvider>
+            <div className="ee-shell">
+              <MobileShell>
+                <Sidebar entities={entities} currentUser={currentUser} />
+              </MobileShell>
+              <main className="ee-main" style={{ display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
+                {children}
+              </main>
+            </div>
+            <DrawerHost
+              defaultAccountId={defaultAccountId}
+              taskAssignees={taskAssignees}
+              taskCompanies={taskCompanies.map((c) => ({ id: c.id, name: c.name }))}
+            />
+          </DrawerProvider>
+        </Providers>
       </body>
     </html>
   );
