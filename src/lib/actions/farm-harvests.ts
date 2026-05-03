@@ -15,6 +15,7 @@ import {
   companies,
   accounts,
 } from "@/db/schema";
+import { logActivity } from "@/lib/activity/log";
 
 // ── Farm-side picking event (stages 1 + 2) ────────────────────────────
 
@@ -62,6 +63,13 @@ export async function createFarmHarvest(
       .returning({ id: farmHarvests.id });
     revalidatePath("/harvests");
     revalidatePath("/pending");
+    await logActivity({
+      action: "create",
+      entityKind: "farm_harvest",
+      entityId: row.id,
+      summary: `Farm harvest ${input.harvestDate}: ${input.bucketCount ?? 0} buckets, ${input.flowerCount ?? 0} flowers`,
+      metadata: { harvestDate: input.harvestDate, recordedBy: input.recordedBy ?? null },
+    });
     return { ok: true, id: row.id };
   } catch (e) {
     console.error("createFarmHarvest failed:", e);
@@ -185,6 +193,13 @@ export async function recordProcessedReport(
     revalidatePath("/harvests");
     revalidatePath("/pending");
     revalidatePath("/income");
+    await logActivity({
+      action: "create",
+      entityKind: "harvest",
+      entityId: harvestRow.id,
+      summary: `Processed report: ${input.kgAccepted}kg accepted / ${input.kgDeclined}kg declined on ${input.deliveryDate}`,
+      metadata: { processorCompanyId: input.processorCompanyId, expectedTotalUsd: input.expectedTotalUsd ?? null },
+    });
     return { ok: true, harvestId: harvestRow.id, settlementId: settlementRow.id };
   } catch (e) {
     console.error("recordProcessedReport failed:", e);
@@ -277,6 +292,13 @@ export async function recordPayment(
     revalidatePath("/harvests");
     revalidatePath("/pending");
     revalidatePath("/income");
+    await logActivity({
+      action: "create",
+      entityKind: "harvest_payment",
+      entityId: row.id,
+      summary: `Payment ${input.kind}: $${input.amountUsd.toFixed(2)} on ${input.paidDate}`,
+      metadata: { harvestId: input.harvestId, kind: input.kind },
+    });
     return { ok: true, settlementId: row.id };
   } catch (e) {
     console.error("recordPayment failed:", e);

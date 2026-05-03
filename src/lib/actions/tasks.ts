@@ -9,6 +9,7 @@ import { tasks, people } from "@/db/schema";
 import type { TaskPriority, TaskStatus } from "@/lib/queries/tasks";
 import { getCurrentPersonId } from "@/lib/auth/session";
 import { sendEmail, taskAssignedEmail } from "@/lib/notifications/email";
+import { logActivity } from "@/lib/activity/log";
 
 const STATUSES: TaskStatus[] = ["open", "in_progress", "blocked", "done", "archived"];
 const PRIORITIES: TaskPriority[] = ["low", "medium", "high"];
@@ -83,6 +84,14 @@ export async function createTask(
       .returning({ id: tasks.id });
 
     revalidatePath("/pending");
+    await logActivity({
+      action: "create",
+      entityKind: "task",
+      entityId: row.id,
+      summary: `Created task: ${title}`,
+      metadata: { status, priority, assigneePersonId: input.assigneePersonId ?? null },
+      actorPersonId: actorId,
+    });
     if (input.assigneePersonId) {
       await notifyAssigned(input.assigneePersonId, actorId, title);
     }
@@ -190,6 +199,15 @@ export async function updateTask(
 
     await db.update(tasks).set(patch).where(eq(tasks.id, input.id));
     revalidatePath("/pending");
+
+    await logActivity({
+      action: input.status === "done" ? "complete" : "update",
+      entityKind: "task",
+      entityId: input.id,
+      summary: `Updated task: ${patch.title ?? prior?.title ?? ""}`.trim(),
+      metadata: { changes: Object.keys(patch).filter((k) => k !== "updatedAt" && k !== "lastTouchedByPersonId") },
+      actorPersonId: actorId,
+    });
 
     if (
       prior &&

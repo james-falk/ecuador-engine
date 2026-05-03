@@ -20,3 +20,4 @@ export * from "./lead-contact-history";
 export * from "./buyers";
 export * from "./pricing-inputs";
 export * from "./intel-documents";
+export * from "./activity-events";

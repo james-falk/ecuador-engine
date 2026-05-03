@@ -8,8 +8,7 @@ import Link from "next/link";
 import { Topbar } from "@/components/design/topbar";
 import { PricingSheetEmbed } from "@/components/design/pricing-sheet-embed";
 import { BuyerBoard } from "@/components/design/buyer-board";
-import { listCompanyFolder, resolvePath } from "@/lib/google/drive";
-// resolvePath now starts at the Ecuador root; pass paths relative to it.
+import { getFileMeta, KNOWN_DRIVE_FILES, listFolder } from "@/lib/google/drive";
 import { getBuyers } from "@/lib/queries/buyers";
 
 type TabKey = "pricing" | "buyers" | "drive";
@@ -27,34 +26,29 @@ export default async function SellingPage({
 
   const buyers = await getBuyers();
 
-  // Drive folder pull happens server-side. Failures surface inline.
+  // Drive folder pull happens server-side. Hardcoded folder ID so renames
+  // / spelling drift don't break the lookup. See KNOWN_DRIVE_FILES.
   let driveFiles: Array<{ id: string; name: string; webViewLink: string | null; modifiedTime: string | null; isFolder: boolean }> = [];
   let driveError: string | null = null;
   let driveFolderLink: string | null = null;
   try {
-    const result = await listCompanyFolder("Selling in US");
-    if (result) {
-      driveFiles = result.files;
-      driveFolderLink = result.folder.webViewLink;
-    }
+    const folder = await getFileMeta(KNOWN_DRIVE_FILES.sellingInUsFolder);
+    driveFolderLink = folder.webViewLink;
+    driveFiles = await listFolder(KNOWN_DRIVE_FILES.sellingInUsFolder);
   } catch (e) {
     driveError = (e as Error).message ?? "Drive lookup failed";
   }
 
-  // Find the live pricing sheet so the iframe survives renames/moves.
+  // Pricing sheet is also pinned by ID so it survives folder reorgs.
   let pricingSheetId: string | null = null;
   let pricingSheetLink: string | null = null;
   let pricingSheetError: string | null = null;
   try {
-    const sheet = await resolvePath("Selling in US/Documents/Pricing Sheet.xlsx");
-    if (sheet && !sheet.isFolder) {
-      pricingSheetId = sheet.id;
-      pricingSheetLink = sheet.webViewLink;
-    } else {
-      pricingSheetError = "Pricing Sheet.xlsx not found in Ecuador/Selling in US/Documents/";
-    }
+    const sheet = await getFileMeta(KNOWN_DRIVE_FILES.pricingSheet);
+    pricingSheetId = sheet.id;
+    pricingSheetLink = sheet.webViewLink;
   } catch (e) {
-    pricingSheetError = (e as Error).message ?? "Drive lookup failed";
+    pricingSheetError = (e as Error).message ?? "Pricing sheet not found in Drive";
   }
 
   return (

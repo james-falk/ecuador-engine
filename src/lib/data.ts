@@ -59,6 +59,7 @@ export type ComplianceItem = {
   status: ComplianceStatus;
   identifier: string | null;
   evidence: string;
+  evidenceUrl?: string | null;
   notes: string;
 };
 

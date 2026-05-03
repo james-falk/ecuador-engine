@@ -1,9 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { entities, type ComplianceItem, type ComplianceStatus } from "@/lib/data";
+import type { Entity } from "@/lib/data";
+import { type ComplianceItem, type ComplianceStatus } from "@/lib/data";
 import { Icon, StatusPill, EntityChip } from "./icons";
 import { updateComplianceItem } from "@/lib/actions/compliance";
+import { DrivePicker, type DriveFile } from "./drive-picker";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -26,18 +28,29 @@ const STATUS_OPTIONS: ComplianceStatus[] = [
   "na",
 ];
 
-export function ComplianceDetail({ item, onClose }: { item: ComplianceItem; onClose: () => void }) {
+export function ComplianceDetail({
+  item,
+  onClose,
+  ownerEntities = [],
+}: {
+  item: ComplianceItem;
+  onClose: () => void;
+  ownerEntities?: Entity[];
+}) {
   const [status, setStatus] = React.useState<ComplianceStatus>(item.status);
   const [identifier, setIdentifier] = React.useState(item.identifier || "");
   const [notes, setNotes] = React.useState(item.notes || "");
+  const [evidenceUrl, setEvidenceUrl] = React.useState(item.evidenceUrl ?? "");
+  const [pickerOpen, setPickerOpen] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
-  const owner = entities.find((e) => e.id === item.owner);
+  const owner = ownerEntities.find((e) => e.id === item.owner);
 
   const dirty =
     status !== item.status ||
     identifier !== (item.identifier || "") ||
-    notes !== (item.notes || "");
+    notes !== (item.notes || "") ||
+    evidenceUrl !== (item.evidenceUrl ?? "");
 
   const onSave = () => {
     setError(null);
@@ -47,6 +60,7 @@ export function ComplianceDetail({ item, onClose }: { item: ComplianceItem; onCl
         status,
         identifier: identifier.trim() || null,
         notes,
+        evidenceUrl: evidenceUrl.trim() || null,
       });
       if (!res.ok) {
         setError(res.error);
@@ -55,6 +69,11 @@ export function ComplianceDetail({ item, onClose }: { item: ComplianceItem; onCl
       onClose();
     });
   };
+
+  function onDrivePick(file: DriveFile) {
+    setEvidenceUrl(file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`);
+    setPickerOpen(false);
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -142,11 +161,32 @@ export function ComplianceDetail({ item, onClose }: { item: ComplianceItem; onCl
           <div className="mono" style={{ fontSize: 12, color: "var(--text-1)" }}>{item.responsible}</div>
         </Field>
 
-        <Field label="Evidence">
-          <div style={{ fontSize: 12.5, color: item.evidence ? "var(--text-1)" : "var(--text-3)" }}>
-            {item.evidence || "No evidence on file yet."}
+        <Field label="Evidence file" hint="Drive link to the actual cert / number screenshot.">
+          <div style={{ display: "flex", gap: 6 }}>
+            <input
+              value={evidenceUrl}
+              onChange={(e) => setEvidenceUrl(e.target.value)}
+              placeholder="https://drive.google.com/…"
+              className="mono"
+              style={{ ...inputStyle, flex: 1 }}
+            />
+            <button type="button" className="btn btn--ghost" onClick={() => setPickerOpen(true)}>
+              <Icon name="search" size={11} /> Browse Drive
+            </button>
+            {evidenceUrl && (
+              <a href={evidenceUrl} target="_blank" rel="noreferrer" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+                Open
+              </a>
+            )}
           </div>
         </Field>
+        <DrivePicker open={pickerOpen} onClose={() => setPickerOpen(false)} onSelect={onDrivePick} />
+
+        {item.evidence && (
+          <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+            Evidence source: {item.evidence}
+          </div>
+        )}
 
         <Field label="Notes">
           <textarea

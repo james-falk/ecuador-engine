@@ -55,11 +55,33 @@ const ORDER: Status[] = ["awaiting_report", "awaiting_payment", "awaiting_balanc
 export function HarvestsPipelineView({
   harvests,
   farmHarvests,
+  highlightHarvestId = null,
+  anchorDate = null,
 }: {
   harvests: HarvestRow[];
   farmHarvests: FarmHarvestRow[];
+  highlightHarvestId?: string | null;
+  anchorDate?: string | null;
 }) {
   const [showComplete, setShowComplete] = React.useState(false);
+
+  // Scroll to + briefly flash the highlighted row when arriving from /pending.
+  React.useEffect(() => {
+    const id = highlightHarvestId
+      ? `harvest-row-${highlightHarvestId}`
+      : anchorDate
+      ? `harvest-anchor-${anchorDate}`
+      : null;
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.dataset.flash = "1";
+    const t = setTimeout(() => {
+      delete el.dataset.flash;
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [highlightHarvestId, anchorDate]);
 
   // Group harvests by status.
   const byStatus = new Map<Status, HarvestRow[]>();
@@ -225,6 +247,8 @@ function PipelineSection({
 }
 
 function PipelineRow({ h, status, isFirst }: { h: HarvestRow; status: Status; isFirst: boolean }) {
+  // Anchor IDs let /pending deep-links scroll to the right row.
+  const anchorId = `harvest-row-${h.id}`;
   let received = 0;
   let expected = 0;
   let kgProcessed = 0;
@@ -240,6 +264,8 @@ function PipelineRow({ h, status, isFirst }: { h: HarvestRow; status: Status; is
 
   return (
     <div
+      id={anchorId}
+      data-harvest-date={h.harvestDate}
       style={{
         display: "grid",
         gridTemplateColumns: "100px 1fr 100px 110px 110px",
@@ -248,6 +274,19 @@ function PipelineRow({ h, status, isFirst }: { h: HarvestRow; status: Status; is
         alignItems: "center",
         borderTop: isFirst ? 0 : "1px solid var(--line-soft)",
         fontSize: 12.5,
+        transition: "background 600ms ease",
+      }}
+      // Briefly tint the row when the deep-link landing effect runs.
+      ref={(el) => {
+        if (!el) return;
+        const obs = new MutationObserver(() => {
+          if (el.dataset.flash === "1") {
+            el.style.background = "oklch(from var(--green) l c h / 0.18)";
+          } else {
+            el.style.background = "transparent";
+          }
+        });
+        obs.observe(el, { attributes: true, attributeFilter: ["data-flash"] });
       }}
     >
       <span className="mono" style={{ color: "var(--text-2)" }}>{h.harvestDate}</span>

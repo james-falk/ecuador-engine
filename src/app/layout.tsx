@@ -73,6 +73,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             defaultAccountId={defaultAccountId}
             taskAssignees={taskAssignees}
             taskCompanies={taskCompanies.map((c) => ({ id: c.id, name: c.name }))}
+            ownerEntities={entities}
           />
         </DrawerProvider>
       </body>

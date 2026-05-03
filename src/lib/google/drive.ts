@@ -215,6 +215,21 @@ const COMPANY_FOLDER_OVERRIDES: Record<string, string> = {
   "puresol imports":  "PureSol Imports",
 };
 
+// Hardcoded well-known Drive files / folders we reference by ID rather
+// than by path. Survives folder renames; only breaks if the file itself
+// is moved out of My Drive or trashed.
+//
+// To find an ID: run `npx tsx scripts/read-drive-file.ts --list "<path>"`
+// and copy the bracketed value next to the file name.
+export const KNOWN_DRIVE_FILES = {
+  // Ecuador/Selling in US/Documents/Pricing Sheet.xlsx
+  pricingSheet: "1kX99GoA810mbc-pHgc01HJXFAJ3r6k-F",
+  // Ecuador/Selling in US (folder)
+  sellingInUsFolder: "1ForWmONb3rjlN26TI1pvyc3y1p5CKB7G",
+  // Ecuador/Selling in US/Documents (folder)
+  sellingInUsDocumentsFolder: "1fHS1hpnODQT7kUx3EBjOS0WQ0-T1Maxu",
+} as const;
+
 // Find a subfolder under the Ecuador root for a given company. First tries
 // the hardcoded override, then falls back to a case-insensitive name match.
 // Returns null if not found OR the engine isn't configured.

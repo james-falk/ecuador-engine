@@ -72,7 +72,19 @@ export default async function PendingPage({
                 {pipeline.map((p, i) => (
                   <Link
                     key={p.id}
-                    href={p.relatedHarvestId ? `/harvests` : "/harvests"}
+                    href={(() => {
+                      // Deep-link into the Pipeline view; highlight the
+                      // specific harvest row if we have one, otherwise just
+                      // anchor on the date so the user lands near it.
+                      const year = p.date.slice(0, 4);
+                      const params = new URLSearchParams({
+                        view: "pipeline",
+                        year: /^\d{4}$/.test(year) ? year : "all",
+                      });
+                      if (p.relatedHarvestId) params.set("highlight", p.relatedHarvestId);
+                      else if (p.date) params.set("anchor", p.date);
+                      return `/harvests?${params.toString()}`;
+                    })()}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "100px 130px 1fr",

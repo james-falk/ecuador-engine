@@ -8,11 +8,26 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  accounts,
   expenseEntries,
   harvestSettlements,
   cashMovements,
   farmHarvests,
 } from "@/db/schema";
+
+// Per James's directive: Finca and PureSol are completely separate
+// businesses. Their financial flows must NEVER be mixed. Account-slug
+// per company tab. PureSol has no accounts in v1 → tab renders empty.
+//
+// Farm-side tables (farm_harvests, harvests-via-processor) are
+// FINCA-ONLY by definition (the farm is in Ecuador). Excluded from the
+// PureSol tab regardless.
+export const COMPANY_ACCOUNT_SLUGS: Record<string, string[]> = {
+  "finca-del-dragon": ["finca-ec"],
+  "puresol-imports": [], // No PureSol-side accounts seeded yet.
+};
+
+const FINCA_ONLY_TABLES = new Set(["farm_harvests"]);
 
 export type MonthRow = {
   month: string; // YYYY-MM
@@ -44,17 +59,41 @@ function rangeFor(year: number): { from: string; to: string } {
   return { from: `${year}-01-01`, to: `${year}-12-31` };
 }
 
-export async function getIncomeMonthly(year: number): Promise<MonthRow[]> {
-  const { from, to } = rangeFor(year);
+// Resolve a company slug → account ids it owns. Empty array = no accounts
+// seeded yet (e.g. PureSol in v1) → all aggregations return 0.
+async function getCompanyAccountIds(companySlug: string): Promise<string[]> {
+  const slugs = COMPANY_ACCOUNT_SLUGS[companySlug] ?? [];
+  if (slugs.length === 0) return [];
+  const rows = await db
+    .select({ id: accounts.id })
+    .from(accounts)
+    .where(sql`${accounts.slug} = ANY(${slugs})`);
+  return rows.map((r) => r.id);
+}
 
-  // Expenses by month.
+function isFincaOnly(companySlug: string): boolean {
+  return companySlug === "finca-del-dragon";
+}
+
+export async function getIncomeMonthly(year: number, companySlug = "finca-del-dragon"): Promise<MonthRow[]> {
+  const { from, to } = rangeFor(year);
+  const accountIds = await getCompanyAccountIds(companySlug);
+
+  // No accounts → render empty year (12 zero rows).
+  if (accountIds.length === 0) {
+    return emptyMonths(year);
+  }
+
+  const accountFilter = sql`account_id = ANY(${accountIds})`;
+
+  // Expenses by month — filtered to this company's accounts.
   const expRows = await db
     .select({
       month: sql<string>`to_char(${expenseEntries.entryDate}, 'YYYY-MM')`,
       total: sql<string>`coalesce(sum(${expenseEntries.amountUsd}), 0)::numeric(12,2)`,
     })
     .from(expenseEntries)
-    .where(and(gte(expenseEntries.entryDate, from), lte(expenseEntries.entryDate, to)))
+    .where(and(gte(expenseEntries.entryDate, from), lte(expenseEntries.entryDate, to), sql`${expenseEntries.accountId} = ANY(${accountIds})`))
     .groupBy(sql`to_char(${expenseEntries.entryDate}, 'YYYY-MM')`);
 
   // Settlements (harvest revenue) by month using paid_date when present.
@@ -69,7 +108,8 @@ export async function getIncomeMonthly(year: number): Promise<MonthRow[]> {
       and(
         sql`${harvestSettlements.paidDate} IS NOT NULL`,
         sql`${harvestSettlements.paidDate} >= ${from}`,
-        sql`${harvestSettlements.paidDate} <= ${to}`
+        sql`${harvestSettlements.paidDate} <= ${to}`,
+        sql`${harvestSettlements.paidToAccountId} = ANY(${accountIds})`
       )
     )
     .groupBy(sql`to_char(${harvestSettlements.paidDate}, 'YYYY-MM')`);
@@ -85,26 +125,33 @@ export async function getIncomeMonthly(year: number): Promise<MonthRow[]> {
     .where(
       and(
         gte(cashMovements.transferDate, from),
-        lte(cashMovements.transferDate, to)
+        lte(cashMovements.transferDate, to),
+        sql`${cashMovements.accountId} = ANY(${accountIds})`
       )
     )
     .groupBy(sql`to_char(${cashMovements.transferDate}, 'YYYY-MM')`, cashMovements.direction);
 
-  // Farm harvests by month — buckets + flowers.
-  const farmRows = await db
-    .select({
-      month: sql<string>`to_char(${farmHarvests.harvestDate}, 'YYYY-MM')`,
-      buckets: sql<number>`coalesce(sum(${farmHarvests.bucketCount}), 0)::int`,
-      flowers: sql<number>`coalesce(sum(${farmHarvests.flowerCount}), 0)::int`,
-    })
-    .from(farmHarvests)
-    .where(
-      and(
-        gte(farmHarvests.harvestDate, from),
-        lte(farmHarvests.harvestDate, to)
-      )
-    )
-    .groupBy(sql`to_char(${farmHarvests.harvestDate}, 'YYYY-MM')`);
+  // Farm harvests by month — buckets + flowers. FINCA ONLY (the farm is
+  // physically in Ecuador). PureSol view skips this entirely.
+  const farmRows = isFincaOnly(companySlug)
+    ? await db
+        .select({
+          month: sql<string>`to_char(${farmHarvests.harvestDate}, 'YYYY-MM')`,
+          buckets: sql<number>`coalesce(sum(${farmHarvests.bucketCount}), 0)::int`,
+          flowers: sql<number>`coalesce(sum(${farmHarvests.flowerCount}), 0)::int`,
+        })
+        .from(farmHarvests)
+        .where(
+          and(
+            gte(farmHarvests.harvestDate, from),
+            lte(farmHarvests.harvestDate, to)
+          )
+        )
+        .groupBy(sql`to_char(${farmHarvests.harvestDate}, 'YYYY-MM')`)
+    : [];
+
+  void accountFilter; // marker that the filter is applied above
+  void eq; // keep import live
 
   // Stitch — render every month in the year for chart consistency.
   const months: MonthRow[] = [];
@@ -139,8 +186,27 @@ export async function getIncomeMonthly(year: number): Promise<MonthRow[]> {
   return months;
 }
 
-export async function getIncomeYearSummary(year: number): Promise<IncomeYearSummary> {
-  const months = await getIncomeMonthly(year);
+function emptyMonths(year: number): MonthRow[] {
+  const out: MonthRow[] = [];
+  for (let m = 1; m <= 12; m++) {
+    out.push({
+      month: `${year}-${String(m).padStart(2, "0")}`,
+      expensesUsd: "0.00",
+      settlementsUsd: "0.00",
+      capitalInUsd: "0.00",
+      capitalOutUsd: "0.00",
+      netUsd: "0.00",
+      buckets: 0,
+      flowers: 0,
+      kgProcessed: "0.00",
+      pricePerKg: null,
+    });
+  }
+  return out;
+}
+
+export async function getIncomeYearSummary(year: number, companySlug = "finca-del-dragon"): Promise<IncomeYearSummary> {
+  const months = await getIncomeMonthly(year, companySlug);
   const sum = (k: keyof MonthRow) =>
     months.reduce((acc, r) => acc + Number(r[k]), 0);
   const expensesUsd = sum("expensesUsd").toFixed(2);
@@ -183,6 +249,8 @@ export async function getYearsAvailable(): Promise<number[]> {
   return r.rows.map((row) => parseInt(row.y, 10)).filter((n) => Number.isFinite(n));
 }
 
-export async function getYoYSummary(years: number[]): Promise<IncomeYearSummary[]> {
-  return Promise.all(years.map((y) => getIncomeYearSummary(y)));
+export async function getYoYSummary(years: number[], companySlug = "finca-del-dragon"): Promise<IncomeYearSummary[]> {
+  return Promise.all(years.map((y) => getIncomeYearSummary(y, companySlug)));
 }
+
+void FINCA_ONLY_TABLES; // referenced for future extensions

@@ -6,6 +6,7 @@ import { startOfWeek, parseISO, format } from "date-fns";
 import { db } from "@/db";
 import { cashMovements } from "@/db/schema";
 import type { CashMovementDirection } from "@/lib/queries/cash-movements";
+import { logActivity } from "@/lib/activity/log";
 
 function sundayOfWeek(ymd: string): string {
   return format(startOfWeek(parseISO(ymd), { weekStartsOn: 0 }), "yyyy-MM-dd");
@@ -47,6 +48,13 @@ export async function createCashMovement(
     .returning({ id: cashMovements.id });
 
   revalidatePath("/", "layout");
+  await logActivity({
+    action: "create",
+    entityKind: "cash_movement",
+    entityId: row.id,
+    summary: `Wire ${input.direction === "in_to_ec" ? "US → Ecuador" : "Ecuador → US"} $${Number(input.amountUsd).toFixed(2)} on ${input.transferDate}`,
+    metadata: { direction: input.direction, counterparty: input.counterparty ?? null },
+  });
   return { ok: true, id: row.id };
 }
 

@@ -7,6 +7,7 @@ import { ExpenseDetail } from "./expense-detail";
 import { HarvestDetail } from "./harvest-detail";
 import { CashMovementDetail } from "./cash-movement-detail";
 import { TaskDetail } from "./task-detail";
+import type { Entity } from "@/lib/data";
 
 // `defaultAccountId` is the Finca EC account UUID (resolved server-side in
 // layout.tsx). The harvest drawer needs it when recording a brand-new
@@ -15,14 +16,19 @@ import { TaskDetail } from "./task-detail";
 // `taskAssignees` / `taskCompanies` populate the dropdowns in the task
 // drawer (people + companies tables, fetched server-side once per layout
 // render).
+//
+// `ownerEntities` lets the compliance drawer resolve the owner avatar
+// from real DB data (no more reaching into mock src/lib/data.ts).
 export function DrawerHost({
   defaultAccountId,
   taskAssignees,
   taskCompanies,
+  ownerEntities,
 }: {
   defaultAccountId: string | null;
   taskAssignees: Array<{ id: string; name: string }>;
   taskCompanies: Array<{ id: string; name: string }>;
+  ownerEntities: Entity[];
 }) {
   const { state, close } = useDrawer();
 
@@ -36,7 +42,7 @@ export function DrawerHost({
   return (
     <>
       <Drawer open={isCompliance} onClose={close}>
-        {isCompliance && <ComplianceDetail item={state.item} onClose={close} />}
+        {isCompliance && <ComplianceDetail item={state.item} onClose={close} ownerEntities={ownerEntities} />}
       </Drawer>
       <Drawer open={isEntity} onClose={close} width={420}>
         {isEntity && <EntityDetail entityId={state.entityId} onClose={close} />}

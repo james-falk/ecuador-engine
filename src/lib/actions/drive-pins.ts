@@ -8,6 +8,7 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { entityDriveFiles, companies } from "@/db/schema";
 import { getEcuadorRootId, getFileMeta } from "@/lib/google/drive";
+import { logActivity } from "@/lib/activity/log";
 
 export type PinDriveFileInput = {
   companyId: string;
@@ -57,6 +58,13 @@ export async function pinDriveFile(
       .returning({ id: entityDriveFiles.id });
 
     revalidatePath(`/companies/${input.companyId}`);
+    await logActivity({
+      action: "pin_drive_file",
+      entityKind: "drive_pin",
+      entityId: row.id,
+      summary: `Pinned ${input.driveFileName} to ${co.id}`,
+      metadata: { companyId: input.companyId, driveFileId: input.driveFileId },
+    });
     return { ok: true, id: row.id };
   } catch (e) {
     console.error("pinDriveFile failed:", e);

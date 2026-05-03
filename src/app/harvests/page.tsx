@@ -26,7 +26,7 @@ const VALID_VIEWS: ViewKey[] = ["stages", "pipeline"];
 export default async function HarvestsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; tab?: string; view?: string }>;
+  searchParams: Promise<{ year?: string; tab?: string; view?: string; highlight?: string; anchor?: string }>;
 }) {
   const params = await searchParams;
   const requested = params.year;
@@ -86,7 +86,12 @@ export default async function HarvestsPage({
               processorOptions={processorOptions}
             />
           ) : (
-            <HarvestsPipelineView harvests={deliveryFeed} farmHarvests={farmHarvests} />
+            <HarvestsPipelineView
+              harvests={deliveryFeed}
+              farmHarvests={farmHarvests}
+              highlightHarvestId={params.highlight ?? null}
+              anchorDate={params.anchor ?? null}
+            />
           )}
         </div>
       </div>

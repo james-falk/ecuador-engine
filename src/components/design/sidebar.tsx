@@ -171,6 +171,12 @@ export function Sidebar({
 
       <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 8, marginTop: 8 }}>
         <NavRow
+          active={isActive("/activity")}
+          icon="clock"
+          label="Activity"
+          onClick={() => router.push("/activity")}
+        />
+        <NavRow
           active={isActive("/drive")}
           icon="file"
           label="Drive"

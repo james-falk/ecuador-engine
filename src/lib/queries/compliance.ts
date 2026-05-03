@@ -112,6 +112,7 @@ function rowToCompliance(
     status: r.status as ComplianceItem["status"],
     identifier: r.identifier,
     evidence: r.evidenceSource ?? "",
+    evidenceUrl: r.evidenceUrl ?? null,
     notes: r.notes ?? "",
   };
 }

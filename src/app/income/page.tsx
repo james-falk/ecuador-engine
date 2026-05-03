@@ -17,6 +17,8 @@ import {
   type IncomeYearSummary,
 } from "@/lib/queries/income";
 import { formatUsd, formatUsdShort } from "@/lib/money";
+import { CashMovementEntry } from "@/components/design/cash-movement-entry";
+import { getDefaultAccountId } from "@/lib/queries/accounts";
 
 const FALLBACK_YEARS = [2022, 2023, 2024, 2025, 2026];
 
@@ -25,10 +27,16 @@ const MONTH_LABELS = [
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+type CompanyKey = "finca-del-dragon" | "puresol-imports";
+const COMPANY_TABS: Array<{ key: CompanyKey; label: string }> = [
+  { key: "finca-del-dragon", label: "Finca del Dragón" },
+  { key: "puresol-imports",  label: "PureSol Imports" },
+];
+
 export default async function IncomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{ year?: string; company?: string }>;
 }) {
   const params = await searchParams;
   const requested = params.year;
@@ -36,15 +44,21 @@ export default async function IncomePage({
     const y = requested ? parseInt(requested, 10) : new Date().getFullYear();
     return Number.isFinite(y) ? y : new Date().getFullYear();
   })();
+  const companyTab: CompanyKey = COMPANY_TABS.some((t) => t.key === params.company)
+    ? (params.company as CompanyKey)
+    : "finca-del-dragon";
 
   const yearsAvailable = await getYearsAvailable();
   const years = yearsAvailable.length > 0 ? yearsAvailable : FALLBACK_YEARS;
 
-  const [months, summary, yoy] = await Promise.all([
-    getIncomeMonthly(year),
-    getIncomeYearSummary(year),
-    getYoYSummary(years),
+  const [months, summary, yoy, fincaAccountId] = await Promise.all([
+    getIncomeMonthly(year, companyTab),
+    getIncomeYearSummary(year, companyTab),
+    getYoYSummary(years, companyTab),
+    getDefaultAccountId(),
   ]);
+
+  const isEmptyCompany = companyTab === "puresol-imports" && Number(summary.expensesUsd) === 0 && Number(summary.settlementsUsd) === 0 && summary.capitalInUsd === "0.00" && summary.capitalOutUsd === "0.00";
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -63,15 +77,26 @@ export default async function IncomePage({
               Income sheet
             </h1>
             <span style={{ fontSize: 12.5, color: "var(--text-3)" }}>
-              Money in, money out — and when fruit is worth the most.
+              Money in, money out — per company, never mixed.
             </span>
           </div>
-          <YearPicker selected={String(year)} years={years} />
 
-          <Kpis summary={summary} />
-          <MonthlyChart months={months} />
-          <SeasonalOverlay months={months} />
-          <YoYTable yoy={yoy} currentYear={year} />
+          <CompanyTabs current={companyTab} year={requested ?? String(year)} />
+          <YearPicker selected={String(year)} years={years} companyTab={companyTab} />
+
+          {isEmptyCompany ? (
+            <EmptyCompanyState companyLabel="PureSol Imports" />
+          ) : (
+            <>
+              {companyTab === "finca-del-dragon" && fincaAccountId && (
+                <CashMovementEntry accountId={fincaAccountId} />
+              )}
+              <Kpis summary={summary} />
+              <MonthlyChart months={months} />
+              {companyTab === "finca-del-dragon" && <SeasonalOverlay months={months} />}
+              <YoYTable yoy={yoy} currentYear={year} companyTab={companyTab} />
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -80,7 +105,61 @@ export default async function IncomePage({
 
 // ── Year picker ──────────────────────────────────────────────────────
 
-function YearPicker({ selected, years }: { selected: string; years: number[] }) {
+function CompanyTabs({ current, year }: { current: CompanyKey; year: string }) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        padding: 3,
+        borderRadius: 8,
+        background: "var(--bg-2)",
+        border: "1px solid var(--line-soft)",
+        marginBottom: 14,
+      }}
+    >
+      {COMPANY_TABS.map((t) => {
+        const active = t.key === current;
+        return (
+          <Link
+            key={t.key}
+            href={`?company=${t.key}&year=${year}`}
+            style={{
+              padding: "5px 14px",
+              borderRadius: 6,
+              background: active ? "var(--bg-4)" : "transparent",
+              color: active ? "var(--text-0)" : "var(--text-2)",
+              fontSize: 11.5,
+              fontWeight: 500,
+              textDecoration: "none",
+            }}
+          >
+            {t.label}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+function EmptyCompanyState({ companyLabel }: { companyLabel: string }) {
+  return (
+    <div
+      style={{
+        padding: "48px 18px",
+        textAlign: "center",
+        color: "var(--text-3)",
+        fontSize: 13,
+        border: "1px dashed var(--line-soft)",
+        borderRadius: 10,
+        marginTop: 8,
+      }}
+    >
+      No financial activity recorded for {companyLabel} yet.
+    </div>
+  );
+}
+
+function YearPicker({ selected, years, companyTab }: { selected: string; years: number[]; companyTab: CompanyKey }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 24, flexWrap: "wrap" }}>
       <span className="label" style={{ color: "var(--text-3)", marginRight: 8 }}>Year</span>
@@ -90,7 +169,7 @@ function YearPicker({ selected, years }: { selected: string; years: number[] }) 
         return (
           <Link
             key={key}
-            href={`?year=${y}`}
+            href={`?company=${companyTab}&year=${y}`}
             className="mono"
             style={{
               padding: "3px 10px",
@@ -420,7 +499,7 @@ function SeasonalOverlay({ months }: { months: MonthRow[] }) {
 
 // ── YoY table ────────────────────────────────────────────────────────
 
-function YoYTable({ yoy, currentYear }: { yoy: IncomeYearSummary[]; currentYear: number }) {
+function YoYTable({ yoy, currentYear, companyTab }: { yoy: IncomeYearSummary[]; currentYear: number; companyTab: CompanyKey }) {
   const sorted = [...yoy].sort((a, b) => b.year - a.year);
   return (
     <Section title="Year over year">
@@ -458,7 +537,7 @@ function YoYTable({ yoy, currentYear }: { yoy: IncomeYearSummary[]; currentYear:
             return (
               <Link
                 key={row.year}
-                href={`?year=${row.year}`}
+                href={`?company=${companyTab}&year=${row.year}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "80px 1fr 1fr 1fr 1fr 1fr 90px",

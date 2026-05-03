@@ -9,6 +9,7 @@ import type { HarvestRow } from "@/lib/queries/harvests";
 import { updateHarvest, deleteHarvest, recordSettlement, updateSettlement } from "@/lib/actions/harvests";
 import { Icon } from "./icons";
 import { formatUsd } from "@/lib/money";
+import { DrivePicker, type DriveFile } from "./drive-picker";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -58,6 +59,17 @@ export function HarvestDetail({
 
   const [isPending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
+  const [evidencePickerOpen, setEvidencePickerOpen] = React.useState(false);
+  const [pdfPickerOpen, setPdfPickerOpen] = React.useState(false);
+
+  function onEvidencePick(file: DriveFile) {
+    setEvidenceUrl(file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`);
+    setEvidencePickerOpen(false);
+  }
+  function onPdfPick(file: DriveFile) {
+    setPdfUrl(file.webViewLink ?? `https://drive.google.com/file/d/${file.id}/view`);
+    setPdfPickerOpen(false);
+  }
 
   const harvestDirty =
     harvestDate !== item.harvestDate ||
@@ -187,8 +199,19 @@ export function HarvestDetail({
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-sans)" }} />
           </Field>
           <Field label="Evidence URL" hint="Drive link to the delivery slip / photo.">
-            <input value={evidenceUrl} onChange={(e) => setEvidenceUrl(e.target.value)} className="mono" style={inputStyle} />
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={evidenceUrl} onChange={(e) => setEvidenceUrl(e.target.value)} className="mono" style={{ ...inputStyle, flex: 1 }} placeholder="https://drive.google.com/…" />
+              <button type="button" className="btn btn--ghost" onClick={() => setEvidencePickerOpen(true)}>
+                <Icon name="search" size={11} /> Browse Drive
+              </button>
+              {evidenceUrl && (
+                <a href={evidenceUrl} target="_blank" rel="noreferrer" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+                  Open
+                </a>
+              )}
+            </div>
           </Field>
+          <DrivePicker open={evidencePickerOpen} onClose={() => setEvidencePickerOpen(false)} onSelect={onEvidencePick} />
         </Section>
 
         {/* SETTLEMENT */}
@@ -258,9 +281,20 @@ export function HarvestDetail({
               <input value={netPayUsd} onChange={(e) => setNetPayUsd(e.target.value)} inputMode="decimal" className="mono" style={inputStyle} />
             </Field>
           </Row>
-          <Field label="PDF URL">
-            <input value={pdfUrl} onChange={(e) => setPdfUrl(e.target.value)} className="mono" style={inputStyle} />
+          <Field label="Report PDF" hint="Pick from Drive or paste a link.">
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={pdfUrl} onChange={(e) => setPdfUrl(e.target.value)} className="mono" style={{ ...inputStyle, flex: 1 }} placeholder="https://drive.google.com/…" />
+              <button type="button" className="btn btn--ghost" onClick={() => setPdfPickerOpen(true)}>
+                <Icon name="search" size={11} /> Browse Drive
+              </button>
+              {pdfUrl && (
+                <a href={pdfUrl} target="_blank" rel="noreferrer" className="btn btn--ghost" style={{ textDecoration: "none" }}>
+                  Open
+                </a>
+              )}
+            </div>
           </Field>
+          <DrivePicker open={pdfPickerOpen} onClose={() => setPdfPickerOpen(false)} onSelect={onPdfPick} />
           <Field label="Waste observations">
             <textarea value={wasteObservations} onChange={(e) => setWasteObservations(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "var(--font-sans)" }} />
           </Field>
