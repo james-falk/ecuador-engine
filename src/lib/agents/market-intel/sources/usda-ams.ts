@@ -38,14 +38,21 @@ interface MarsApiResponse {
 
 const MARS_BASE = "https://marsapi.ams.usda.gov/services/v1.2";
 
-// These slugs map to the 5 USDA AMS terminal market reports for produce.
-// slug_id values sourced from MARS API report directory.
+// USDA AMS reports we pull dragon fruit pricing from. slug_id values
+// verified against the live MARS API directory. Mix of two report types:
+//
+//   *_FV010 = Terminal Market FRUIT prices (per-city wholesale)
+//   *_FV111 = Shipping Point FRUIT prices (per-city import/origin)
+//
+// Originally the list had hardcoded IDs (2608/2609/2617/2628/2634) that
+// were ALL "Invalid Identifier" — every call 404'd. Re-verify with:
+//   `npx tsx scripts/probe-usda.ts`
 const REPORT_CONFIGS = [
-  { slugId: "2634", source: "usda-ams-national-fob", market: "national-fob" },
-  { slugId: "2608", source: "usda-ams-ny-terminal", market: "NY-terminal" },
-  { slugId: "2609", source: "usda-ams-philly-terminal", market: "Philly-terminal" },
-  { slugId: "2617", source: "usda-ams-miami-terminal", market: "Miami-terminal" },
-  { slugId: "2628", source: "usda-ams-la-terminal", market: "LA-terminal" },
+  { slugId: "2395", source: "usda-ams-miami-shipping",  market: "Miami-shipping" },    // MH_FV111 — densest dragon fruit data
+  { slugId: "2310", source: "usda-ams-miami-terminal",  market: "Miami-terminal" },    // MH_FV010
+  { slugId: "2314", source: "usda-ams-ny-terminal",     market: "NY-terminal" },       // NX_FV010
+  { slugId: "2318", source: "usda-ams-philly-terminal", market: "Philly-terminal" },   // NA_FV010
+  { slugId: "2306", source: "usda-ams-la-terminal",     market: "LA-terminal" },       // HC_FV010 — Vietnam vs Ecuador comp
 ] as const;
 
 const DRAGON_FRUIT_RE = /dragon\s*fruit|pitahaya|pitaya/i;
@@ -146,18 +153,35 @@ async function fetchReport(
   sevenDaysAgo.setDate(today.getDate() - 7);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
 
+  // MARS API auth: HTTP Basic with the API key as the username and an
+  // empty password. Per USDA AMS docs:
+  //   curl -u "$MARS_API_KEY:" https://marsapi.ams.usda.gov/services/v1.2/...
+  const apiKey = process.env.MARS_API_KEY;
+  if (!apiKey) {
+    console.log(
+      `[market-intel/usda-ams] MARS_API_KEY not set — upstream unavailable, returning 0 rows`
+    );
+    return [];
+  }
+  const authHeader = "Basic " + Buffer.from(`${apiKey}:`).toString("base64");
+
+  // The MARS API has no server-side commodity filter that actually works
+  // (q=, search=, filter[commodity]= are all silently ignored or rejected).
+  // We have to pull the "Report Details" section for the date window and
+  // filter client-side. URL-encoded space in "Report Details" is critical.
   const url =
-    `${MARS_BASE}/reports/${slugId}` +
-    `?q=dragon+fruit` +
-    `&report_begin_date=${fmt(sevenDaysAgo)}` +
+    `${MARS_BASE}/reports/${slugId}/Report%20Details` +
+    `?report_begin_date=${fmt(sevenDaysAgo)}` +
     `&report_end_date=${fmt(today)}`;
 
   let resp: Response;
   try {
     resp = await fetch(url, {
-      headers: { Accept: "application/json" },
-      // 15-second hard timeout
-      signal: AbortSignal.timeout(15_000),
+      headers: { Accept: "application/json", Authorization: authHeader },
+      // 60-second hard timeout. Each report's "Report Details" section
+      // returns up to 100K rows (the API caps page size there) — the
+      // larger terminals (LA, NY) take 30-45s to stream over the wire.
+      signal: AbortSignal.timeout(60_000),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
