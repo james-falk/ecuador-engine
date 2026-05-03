@@ -11,6 +11,7 @@
 import Link from "next/link";
 import { Topbar } from "@/components/design/topbar";
 import { HarvestsTabs } from "@/components/design/harvests-tabs";
+import { HarvestsPipelineView } from "@/components/design/harvests-pipeline-view";
 import { getFarmHarvests, getFarmHarvestStats, getProcessorOptions } from "@/lib/queries/farm-harvests";
 import { getHarvestFeed, getHarvestStats } from "@/lib/queries/harvests";
 
@@ -19,10 +20,13 @@ const YEARS = [2022, 2023, 2024, 2025, 2026];
 type TabKey = "farm" | "reports" | "payments";
 const VALID_TABS: TabKey[] = ["farm", "reports", "payments"];
 
+type ViewKey = "stages" | "pipeline";
+const VALID_VIEWS: ViewKey[] = ["stages", "pipeline"];
+
 export default async function HarvestsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; tab?: string }>;
+  searchParams: Promise<{ year?: string; tab?: string; view?: string }>;
 }) {
   const params = await searchParams;
   const requested = params.year;
@@ -35,6 +39,7 @@ export default async function HarvestsPage({
   const filters = year !== null ? { from: `${year}-01-01`, to: `${year}-12-31` } : {};
 
   const tab: TabKey = VALID_TABS.includes(params.tab as TabKey) ? (params.tab as TabKey) : "farm";
+  const view: ViewKey = VALID_VIEWS.includes(params.view as ViewKey) ? (params.view as ViewKey) : "stages";
 
   const [farmHarvests, farmStats, deliveryFeed, deliveryStats, processorOptions] = await Promise.all([
     getFarmHarvests(filters),
@@ -45,6 +50,7 @@ export default async function HarvestsPage({
   ]);
 
   const scopeLabel = year !== null ? String(year) : "All years";
+  const yp = isAll ? "year=all" : `year=${year}`;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -68,16 +74,62 @@ export default async function HarvestsPage({
           </div>
           <YearPicker selected={isAll ? "all" : String(year)} />
 
-          <HarvestsTabs
-            initialTab={tab}
-            farmHarvests={farmHarvests}
-            farmStats={farmStats}
-            deliveryFeed={deliveryFeed}
-            deliveryStats={deliveryStats}
-            processorOptions={processorOptions}
-          />
+          <ViewToggle current={view} yp={yp} />
+
+          {view === "stages" ? (
+            <HarvestsTabs
+              initialTab={tab}
+              farmHarvests={farmHarvests}
+              farmStats={farmStats}
+              deliveryFeed={deliveryFeed}
+              deliveryStats={deliveryStats}
+              processorOptions={processorOptions}
+            />
+          ) : (
+            <HarvestsPipelineView harvests={deliveryFeed} farmHarvests={farmHarvests} />
+          )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function ViewToggle({ current, yp }: { current: ViewKey; yp: string }) {
+  const opts: Array<{ key: ViewKey; label: string }> = [
+    { key: "stages", label: "Per stage" },
+    { key: "pipeline", label: "Pipeline" },
+  ];
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        padding: 3,
+        borderRadius: 8,
+        background: "var(--bg-2)",
+        border: "1px solid var(--line-soft)",
+        marginBottom: 18,
+      }}
+    >
+      {opts.map((o) => {
+        const active = o.key === current;
+        return (
+          <Link
+            key={o.key}
+            href={`?${yp}&view=${o.key}`}
+            style={{
+              padding: "5px 14px",
+              borderRadius: 6,
+              background: active ? "var(--bg-4)" : "transparent",
+              color: active ? "var(--text-0)" : "var(--text-2)",
+              fontSize: 11.5,
+              fontWeight: 500,
+              textDecoration: "none",
+            }}
+          >
+            {o.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }

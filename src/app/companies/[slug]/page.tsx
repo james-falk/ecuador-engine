@@ -110,7 +110,7 @@ export default async function CompanyPage({
           {sub === "activity" && companyId && (
             <ActivityTab companyId={companyId} filters={filters} />
           )}
-          {sub === "documents" && companyId && <DocumentsTab companyId={companyId} />}
+          {sub === "documents" && companyId && <DocumentsTab companyId={companyId} entityName={entity.name} />}
           {(sub === "overview" || sub === "activity") && !companyId && (
             <div style={{ padding: 32, color: "var(--text-3)", fontSize: 12 }}>
               Cross-pillar lookup unavailable for this entity (no UUID found).
@@ -386,31 +386,123 @@ async function ActivityTab({
   );
 }
 
-async function DocumentsTab({ companyId }: { companyId: string }) {
+async function DocumentsTab({ companyId, entityName }: { companyId: string; entityName: string }) {
   const docs = await getCompanyDocuments(companyId);
-  if (docs.length === 0) {
-    return (
-      <div
-        style={{
-          padding: "32px 18px",
-          textAlign: "center",
-          color: "var(--text-3)",
-          fontSize: 12.5,
-          border: "1px dashed var(--line-soft)",
-          borderRadius: 10,
-        }}
-      >
-        No Drive files linked to this entity yet. Pick PDFs from the Drive
-        picker on the Harvests / Compliance surfaces and they will show up here.
-      </div>
-    );
+
+  // Auto-pull from the matching Drive subfolder under Ecuador. Failures are
+  // surfaced inline (no silent failures), per the round-3 plan.
+  let driveFolder: { folder: { id: string; name: string; webViewLink: string | null }; files: Array<{ id: string; name: string; mimeType: string; isFolder: boolean; modifiedTime: string | null; webViewLink: string | null }> } | null = null;
+  let driveError: string | null = null;
+  try {
+    const { listCompanyFolder } = await import("@/lib/google/drive");
+    driveFolder = await listCompanyFolder(entityName);
+  } catch (e) {
+    driveError = (e as Error).message ?? "Drive lookup failed";
   }
+
   const sourceLabel: Record<string, string> = {
     harvest_settlement: "Report",
     harvest_evidence: "Delivery",
     compliance: "Compliance",
     pinned: "Pinned",
   };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+      {/* Drive folder section */}
+      <section>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
+          <h3 style={{ font: "500 13px/1.2 var(--font-display)", margin: 0, color: "var(--text-1)" }}>
+            Drive folder
+          </h3>
+          {driveFolder?.folder?.webViewLink && (
+            <a href={driveFolder.folder.webViewLink} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 10.5, color: "var(--green)", textDecoration: "none" }}>
+              Open in Drive ↗
+            </a>
+          )}
+        </div>
+        {driveError ? (
+          <Banner kind="err">Drive: {driveError}</Banner>
+        ) : !driveFolder ? (
+          <Banner kind="hint">
+            No Drive folder named &quot;{entityName}&quot; found under Ecuador. Create one in Drive to auto-link.
+          </Banner>
+        ) : driveFolder.files.length === 0 ? (
+          <Banner kind="hint">Drive folder is empty.</Banner>
+        ) : (
+          <div style={{ border: "1px solid var(--line-soft)", borderRadius: 10, overflow: "hidden" }}>
+            {driveFolder.files.map((f, i) => (
+              <a
+                key={f.id}
+                href={f.webViewLink ?? `https://drive.google.com/file/d/${f.id}/view`}
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "100px 1fr auto",
+                  gap: 12,
+                  padding: "10px 14px",
+                  alignItems: "center",
+                  borderTop: i === 0 ? 0 : "1px solid var(--line-soft)",
+                  fontSize: 12.5,
+                  textDecoration: "none",
+                  color: "var(--text-1)",
+                }}
+              >
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--text-3)" }}>{f.modifiedTime?.slice(0, 10) ?? "—"}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {f.isFolder ? `📁 ${f.name}` : f.name}
+                </span>
+                <span className="mono" style={{ fontSize: 10.5, color: "var(--green)" }}>Open ↗</span>
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Linked rows from elsewhere in the engine */}
+      {docs.length > 0 && (
+        <section>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
+            <h3 style={{ font: "500 13px/1.2 var(--font-display)", margin: 0, color: "var(--text-1)" }}>
+              Linked from engine
+            </h3>
+            <span style={{ fontSize: 11, color: "var(--text-3)" }}>
+              Files referenced from harvests, compliance, or pinned manually.
+            </span>
+          </div>
+          <DocsLinkedList docs={docs} sourceLabel={sourceLabel} />
+        </section>
+      )}
+    </div>
+  );
+}
+
+function Banner({ kind, children }: { kind: "ok" | "err" | "hint"; children: React.ReactNode }) {
+  const fg = kind === "ok" ? "var(--green)" : kind === "err" ? "var(--rose)" : "var(--text-3)";
+  return (
+    <div
+      style={{
+        padding: "10px 14px",
+        background: kind === "hint" ? "transparent" : `oklch(from ${fg} l c h / 0.10)`,
+        border: `1px ${kind === "hint" ? "dashed" : "solid"} ${kind === "hint" ? "var(--line-soft)" : fg}`,
+        borderRadius: 10,
+        color: kind === "hint" ? "var(--text-3)" : fg,
+        fontSize: 12.5,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function DocsLinkedList({
+  docs,
+  sourceLabel,
+}: {
+  docs: Awaited<ReturnType<typeof getCompanyDocuments>>;
+  sourceLabel: Record<string, string>;
+}) {
   return (
     <div style={{ border: "1px solid var(--line-soft)", borderRadius: 10, overflow: "hidden" }}>
       {docs.map((d, i) => (

@@ -141,8 +141,11 @@ export function DriveBrowser({ pinTargets }: { pinTargets: PinTarget[] }) {
             flexWrap: "wrap",
           }}
         >
-          <button type="button" onClick={() => setFolderId("root")} style={crumbBtn(folderId === "root")}>My Drive</button>
-          {breadcrumb.map((b) => (
+          <button type="button" onClick={() => setFolderId("root")} style={crumbBtn(folderId === "root" || (breadcrumb[0] && folderId === breadcrumb[0].id))}>
+            Ecuador
+          </button>
+          {/* Skip the first crumb (Ecuador root) since we render it via the home label above. */}
+          {breadcrumb.slice(1).map((b) => (
             <React.Fragment key={b.id}>
               <span>/</span>
               <button type="button" onClick={() => setFolderId(b.id)} style={crumbBtn(b.id === folderId)}>

@@ -18,6 +18,24 @@ function getDefaultAccount(): string {
   return v;
 }
 
+// The "/Ecuador" folder is the only subtree the engine reads. Listing or
+// searching outside this subtree is rejected at the boundary so a signed-in
+// user can never accidentally browse the rest of James's Drive.
+//
+// Returns null when the env var isn't configured — callers should surface
+// a configuration banner instead of crashing.
+export function getEcuadorRootId(): string | null {
+  const v = process.env.ECUADOR_DRIVE_FOLDER_ID;
+  return v && v.trim() ? v.trim() : null;
+}
+
+export class DriveScopeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DriveScopeError";
+  }
+}
+
 async function getDrive(email?: string): Promise<drive_v3.Drive> {
   const target = email ?? getDefaultAccount();
   const accessToken = await getAccessToken(target);
@@ -56,7 +74,10 @@ function shape(f: drive_v3.Schema$File): DriveItem {
 }
 
 // List children of a folder. Pass "root" to start at My Drive root.
-export async function listFolder(folderId: string, email?: string): Promise<DriveItem[]> {
+//
+// Internal helper — bypasses scope check. Used by privileged paths (e.g.
+// the read-drive-file CLI script) and recursively by isWithinEcuador.
+async function listFolderUnscoped(folderId: string, email?: string): Promise<DriveItem[]> {
   const drive = await getDrive(email);
   const q = `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false`;
   const res = await drive.files.list({
@@ -68,19 +89,68 @@ export async function listFolder(folderId: string, email?: string): Promise<Driv
   return (res.data.files ?? []).map(shape);
 }
 
-// Free-text search across the whole Drive. Folders + files. Useful when
-// a user knows the filename but not where it lives.
+// Public list: enforces the Ecuador scope. Pass "root" to start at the
+// Ecuador folder (NOT My Drive root). Throws DriveScopeError if the
+// requested folder is outside the Ecuador subtree.
+export async function listFolder(folderId: string, email?: string): Promise<DriveItem[]> {
+  const target = await resolveScopedFolderId(folderId, email);
+  return listFolderUnscoped(target, email);
+}
+
+// Resolve "root" → ECUADOR_DRIVE_FOLDER_ID, or pass through any folderId
+// that's confirmed to be inside the Ecuador subtree. Throws otherwise.
+async function resolveScopedFolderId(folderId: string, email?: string): Promise<string> {
+  const ecuador = getEcuadorRootId();
+  if (!ecuador) {
+    throw new DriveScopeError(
+      "ECUADOR_DRIVE_FOLDER_ID is not set. Configure it in .env.local before browsing Drive."
+    );
+  }
+  if (folderId === "root" || folderId === ecuador) return ecuador;
+  const within = await isWithinEcuador(folderId, ecuador, email);
+  if (!within) {
+    throw new DriveScopeError(`Folder is outside the Ecuador subtree.`);
+  }
+  return folderId;
+}
+
+// Walk parents up; return true if any ancestor is the Ecuador root.
+async function isWithinEcuador(folderId: string, ecuadorRoot: string, email?: string): Promise<boolean> {
+  let current: string | null = folderId;
+  for (let i = 0; i < 12 && current; i++) {
+    if (current === ecuadorRoot) return true;
+    const meta = await getFileMeta(current, email);
+    current = meta.parents[0] ?? null;
+  }
+  return false;
+}
+
+// Free-text search scoped to the Ecuador subtree. Drive's search doesn't
+// support a "subtree" filter natively, so we filter results client-side
+// by walking each hit's parent chain.
 export async function searchFiles(query: string, email?: string): Promise<DriveItem[]> {
+  const ecuador = getEcuadorRootId();
+  if (!ecuador) {
+    throw new DriveScopeError(
+      "ECUADOR_DRIVE_FOLDER_ID is not set. Configure it in .env.local before searching Drive."
+    );
+  }
   const drive = await getDrive(email);
   const safe = query.replace(/'/g, "\\'");
   const q = `name contains '${safe}' and trashed = false`;
   const res = await drive.files.list({
     q,
-    pageSize: 50,
+    pageSize: 100,
     fields: FIELDS,
     orderBy: "modifiedTime desc",
   });
-  return (res.data.files ?? []).map(shape);
+  const all = (res.data.files ?? []).map(shape);
+  const out: DriveItem[] = [];
+  for (const item of all) {
+    if (await isWithinEcuador(item.id, ecuador, email)) out.push(item);
+    if (out.length >= 50) break;
+  }
+  return out;
 }
 
 export async function getFileMeta(fileId: string, email?: string): Promise<DriveItem> {
@@ -93,16 +163,127 @@ export async function getFileMeta(fileId: string, email?: string): Promise<Drive
   return shape(res.data);
 }
 
-// Resolve a folder's breadcrumb back to root. Drive doesn't return paths
-// natively, so we walk parents up. Stops at root or after 12 hops to
-// avoid runaway in pathological cases.
+// Resolve a folder's breadcrumb back up to the Ecuador root (NOT My Drive
+// root). The Ecuador folder itself is included as the first crumb if we
+// can resolve its metadata; otherwise the trail starts at the first
+// ancestor we can read.
 export async function resolveBreadcrumb(folderId: string, email?: string): Promise<DriveItem[]> {
+  const ecuador = getEcuadorRootId();
   const trail: DriveItem[] = [];
   let current: string | null = folderId;
   for (let i = 0; i < 12 && current && current !== "root"; i++) {
     const meta = await getFileMeta(current, email);
     trail.unshift(meta);
+    if (ecuador && current === ecuador) break;
     current = meta.parents[0] ?? null;
   }
   return trail;
 }
+
+// Find a child of a folder by exact (case-insensitive) name. Returns the
+// matching DriveItem, or null. Used to walk a path like "Ecuador/Selling
+// in US/Pricing" segment-by-segment.
+export async function findChildByName(
+  parentFolderId: string,
+  name: string,
+  email?: string
+): Promise<DriveItem | null> {
+  const drive = await getDrive(email);
+  const safeName = name.replace(/'/g, "\\'");
+  const safeParent = parentFolderId.replace(/'/g, "\\'");
+  const res = await drive.files.list({
+    q: `'${safeParent}' in parents and trashed = false and name = '${safeName}'`,
+    pageSize: 5,
+    fields: FIELDS,
+  });
+  const files = res.data.files ?? [];
+  if (files.length > 0) return shape(files[0]);
+  // Fallback to a case-insensitive scan when an exact match misses.
+  const all = await listFolderUnscoped(parentFolderId, email);
+  const lower = name.toLowerCase();
+  const match = all.find((f) => f.name.toLowerCase() === lower);
+  return match ?? null;
+}
+
+// Find a subfolder under the Ecuador root whose name (case-insensitive)
+// matches the given company name. Returns null if not found OR if the
+// engine isn't configured (no Ecuador root).
+export async function findCompanyFolder(companyName: string, email?: string): Promise<DriveItem | null> {
+  const ecuador = getEcuadorRootId();
+  if (!ecuador) return null;
+  const child = await findChildByName(ecuador, companyName, email);
+  if (child && child.isFolder) return child;
+  return null;
+}
+
+// List files in a company's Drive folder. Returns null if no matching folder.
+// Uses the unscoped lister because we already validated the folder lives
+// under Ecuador via findCompanyFolder.
+export async function listCompanyFolder(companyName: string, email?: string): Promise<{ folder: DriveItem; files: DriveItem[] } | null> {
+  const folder = await findCompanyFolder(companyName, email);
+  if (!folder) return null;
+  const files = await listFolderUnscoped(folder.id, email);
+  return { folder, files };
+}
+
+// Walk a slash-separated path under a starting folder. Returns the final
+// DriveItem (file or folder) or null if any segment is missing.
+//
+// Example: resolvePath("root", "Ecuador/Selling in US/Pricing") → file or null.
+export async function resolvePath(
+  startFolderId: string,
+  path: string,
+  email?: string
+): Promise<DriveItem | null> {
+  const segments = path.split("/").map((s) => s.trim()).filter(Boolean);
+  let currentId = startFolderId;
+  let currentItem: DriveItem | null = null;
+  for (const seg of segments) {
+    const child = await findChildByName(currentId, seg, email);
+    if (!child) return null;
+    currentItem = child;
+    currentId = child.id;
+  }
+  return currentItem;
+}
+
+// Download a non-Google-doc file as Buffer (e.g. uploaded PDF or XLSX).
+export async function getFileContent(fileId: string, email?: string): Promise<{
+  buffer: Buffer;
+  mimeType: string;
+  name: string;
+}> {
+  const drive = await getDrive(email);
+  const meta = await getFileMeta(fileId, email);
+  const res = await drive.files.get(
+    { fileId, alt: "media" },
+    { responseType: "arraybuffer" }
+  );
+  // googleapis typings say the body for arraybuffer is unknown; cast safely.
+  const buffer = Buffer.from(res.data as ArrayBuffer);
+  return { buffer, mimeType: meta.mimeType, name: meta.name };
+}
+
+// Export a Google Sheet as CSV (single tab — first sheet by default).
+// Sheets are stored as application/vnd.google-apps.spreadsheet and need
+// .export() rather than .get(alt: 'media').
+export async function exportSheetCsv(fileId: string, email?: string): Promise<{
+  csv: string;
+  name: string;
+}> {
+  const drive = await getDrive(email);
+  const meta = await getFileMeta(fileId, email);
+  const res = await drive.files.export(
+    { fileId, mimeType: "text/csv" },
+    { responseType: "text" }
+  );
+  return { csv: String(res.data ?? ""), name: meta.name };
+}
+
+// Export a single tab of a Google Sheet by tab name. Useful when a workbook
+// has multiple sheets (Pricing / Costs / Buyers / etc.). Drive's export only
+// returns the first sheet, so we fall back to the Sheets API for tab-specific
+// reads. Returns CSV-style rows.
+//
+// Not implemented in v1 — we'll add it if/when the pricing workbook actually
+// has multiple meaningful tabs. For now `exportSheetCsv` (first tab) suffices.

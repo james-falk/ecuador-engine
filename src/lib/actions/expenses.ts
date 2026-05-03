@@ -438,14 +438,10 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
   let harvestPayment = false;
   const harvestAmount = parsePositiveAmount(input.harvestPayment);
   const harvestSource = `${source}:harvest`;
-  // Find INCALPACK as the default processor for stub harvests.
-  const [processor] = await db
-    .select({ id: companies.id })
-    .from(companies)
-    .where(eq(companies.name, "INCALPACK"))
-    .limit(1);
-
-  if (harvestAmount !== null && processor) {
+  // No default processor — we never assume which one a payment came from.
+  // The Harvests pillar is the place to specify processor; this Data Entry
+  // path just records the cash hit.
+  if (harvestAmount !== null) {
     // Look for an existing manual harvest for this week (lot_number prefixed
     // with "manual:<saturday>:harvest" → idempotent re-save).
     const [existingH] = await db
@@ -461,7 +457,6 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
         .set({
           harvestDate: entryDate,
           weekStartDate: weekStart,
-          processorCompanyId: processor.id,
           updatedAt: new Date(),
           lastTouchedAt: new Date(),
         })
@@ -472,10 +467,10 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
         .values({
           harvestDate: entryDate,
           weekStartDate: weekStart,
-          processorCompanyId: processor.id,
+          processorCompanyId: null,
           lotNumber: harvestSource,
           kgDelivered: "0",
-          notes: "Manual entry — kg + grade detail TBD from processor report.",
+          notes: "Manual entry — processor unattributed; kg + grade TBD.",
         })
         .returning({ id: harvests.id });
       harvestId = row.id;
