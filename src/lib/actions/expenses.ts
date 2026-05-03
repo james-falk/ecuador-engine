@@ -163,13 +163,10 @@ export type UpsertWeekInput = {
   capitalIn?: string;
   capitalOut?: string;
   counterparty?: string | null;
-  // Harvest payment received this week (lump-sum). Same caveat as capital
-  // flows — entered from the Harvests page, not /expenses.
-  harvestPayment?: string;
 };
 
 type UpsertWeekResult =
-  | { ok: true; counts: { expenseUpserts: number; expenseDeletes: number; cashMovementsUpserted: number; cashMovementsDeleted: number; harvestPayment: boolean } }
+  | { ok: true; counts: { expenseUpserts: number; expenseDeletes: number; cashMovementsUpserted: number; cashMovementsDeleted: number } }
   | { ok: false; error: string; conflicts?: string[] };
 
 // Saturday entry date for a Sunday-start week. Master-sheet payments
@@ -431,94 +428,9 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
   await applyCashMovement("in_to_ec", input.capitalIn);
   await applyCashMovement("out_to_us", input.capitalOut);
 
-  // Harvest payment received — create OR update a single stub harvest +
-  // settlement keyed by lot_number = source. kg=0 because the actual
-  // weights only land when the processor report is filed via the Harvests
-  // pillar.
-  let harvestPayment = false;
-  const harvestAmount = parsePositiveAmount(input.harvestPayment);
-  const harvestSource = `${source}:harvest`;
-  // No default processor — we never assume which one a payment came from.
-  // The Harvests pillar is the place to specify processor; this Data Entry
-  // path just records the cash hit.
-  if (harvestAmount !== null) {
-    // Look for an existing manual harvest for this week (lot_number prefixed
-    // with "manual:<saturday>:harvest" → idempotent re-save).
-    const [existingH] = await db
-      .select({ id: harvests.id })
-      .from(harvests)
-      .where(eq(harvests.lotNumber, harvestSource))
-      .limit(1);
-    let harvestId: string;
-    if (existingH) {
-      harvestId = existingH.id;
-      await db
-        .update(harvests)
-        .set({
-          harvestDate: entryDate,
-          weekStartDate: weekStart,
-          updatedAt: new Date(),
-          lastTouchedAt: new Date(),
-        })
-        .where(eq(harvests.id, harvestId));
-    } else {
-      const [row] = await db
-        .insert(harvests)
-        .values({
-          harvestDate: entryDate,
-          weekStartDate: weekStart,
-          processorCompanyId: null,
-          lotNumber: harvestSource,
-          kgDelivered: "0",
-          notes: "Manual entry — processor unattributed; kg + grade TBD.",
-        })
-        .returning({ id: harvests.id });
-      harvestId = row.id;
-    }
-    // Upsert the settlement row.
-    const [existingS] = await db
-      .select({ id: harvestSettlements.id })
-      .from(harvestSettlements)
-      .where(eq(harvestSettlements.harvestId, harvestId))
-      .limit(1);
-    if (existingS) {
-      await db
-        .update(harvestSettlements)
-        .set({
-          settlementDate: entryDate,
-          subtotalUsd: harvestAmount.toFixed(2),
-          netPayUsd: harvestAmount.toFixed(2),
-          paidDate: entryDate,
-          updatedAt: new Date(),
-          lastTouchedAt: new Date(),
-        })
-        .where(eq(harvestSettlements.id, existingS.id));
-    } else {
-      await db.insert(harvestSettlements).values({
-        harvestId,
-        settlementDate: entryDate,
-        kgManifested: "0",
-        kgProcessed: "0",
-        kgWaste: "0",
-        subtotalUsd: harvestAmount.toFixed(2),
-        retentionUsd: "0",
-        netPayUsd: harvestAmount.toFixed(2),
-        paidToAccountId: account.id,
-        paidDate: entryDate,
-      });
-    }
-    harvestPayment = true;
-  } else if (harvestAmount === null) {
-    // Cleared — delete any existing manual stub for this week.
-    const [existingH] = await db
-      .select({ id: harvests.id })
-      .from(harvests)
-      .where(eq(harvests.lotNumber, harvestSource))
-      .limit(1);
-    if (existingH) {
-      await db.delete(harvests).where(eq(harvests.id, existingH.id));
-    }
-  }
+  // Harvest payments aren't an expense and don't belong on this surface —
+  // they're entered through the Harvests pillar's Payment tab. The legacy
+  // upsertWeek harvest-stub path was removed (Round 3 feedback).
 
   revalidatePath("/expenses", "page");
   revalidatePath("/", "layout");
@@ -529,7 +441,6 @@ export async function upsertWeek(input: UpsertWeekInput): Promise<UpsertWeekResu
       expenseDeletes,
       cashMovementsUpserted: cmUpserted,
       cashMovementsDeleted: cmDeleted,
-      harvestPayment,
     },
   };
 }

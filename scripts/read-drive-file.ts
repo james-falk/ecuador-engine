@@ -19,7 +19,7 @@ import {
   getFileContent,
   getFileMeta,
   listFolder,
-  resolvePath,
+  resolvePathUnscoped,
 } from "../src/lib/google/drive";
 
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -46,9 +46,10 @@ async function main() {
   }
   const path = positional.join(" "); // join in case the path had spaces split by argv
 
-  // Resolve relative to "root". Paths starting "Ecuador/..." or just any
-  // top-level folder name in My Drive both work.
-  const target = await resolvePath("root", path);
+  // Admin script — resolve relative to My Drive root so we can also list
+  // the Ecuador folder itself when bootstrapping. User-facing surfaces use
+  // the scoped resolvePath instead.
+  const target = await resolvePathUnscoped("root", path);
   if (!target) {
     console.error(`Path not found: ${path}`);
     process.exit(2);

@@ -6,10 +6,10 @@
 
 import Link from "next/link";
 import { Topbar } from "@/components/design/topbar";
-import { PricingSheet } from "@/components/design/pricing-sheet";
+import { PricingSheetEmbed } from "@/components/design/pricing-sheet-embed";
 import { BuyerBoard } from "@/components/design/buyer-board";
-import { listCompanyFolder } from "@/lib/google/drive";
-import { getPricingInputs } from "@/lib/queries/pricing";
+import { listCompanyFolder, resolvePath } from "@/lib/google/drive";
+// resolvePath now starts at the Ecuador root; pass paths relative to it.
 import { getBuyers } from "@/lib/queries/buyers";
 
 type TabKey = "pricing" | "buyers" | "drive";
@@ -25,7 +25,7 @@ export default async function SellingPage({
   const params = await searchParams;
   const tab: TabKey = VALID_TABS.includes(params.tab as TabKey) ? (params.tab as TabKey) : "pricing";
 
-  const [pricing, buyers] = await Promise.all([getPricingInputs(), getBuyers()]);
+  const buyers = await getBuyers();
 
   // Drive folder pull happens server-side. Failures surface inline.
   let driveFiles: Array<{ id: string; name: string; webViewLink: string | null; modifiedTime: string | null; isFolder: boolean }> = [];
@@ -39,6 +39,22 @@ export default async function SellingPage({
     }
   } catch (e) {
     driveError = (e as Error).message ?? "Drive lookup failed";
+  }
+
+  // Find the live pricing sheet so the iframe survives renames/moves.
+  let pricingSheetId: string | null = null;
+  let pricingSheetLink: string | null = null;
+  let pricingSheetError: string | null = null;
+  try {
+    const sheet = await resolvePath("Selling in US/Documents/Pricing Sheet.xlsx");
+    if (sheet && !sheet.isFolder) {
+      pricingSheetId = sheet.id;
+      pricingSheetLink = sheet.webViewLink;
+    } else {
+      pricingSheetError = "Pricing Sheet.xlsx not found in Ecuador/Selling in US/Documents/";
+    }
+  } catch (e) {
+    pricingSheetError = (e as Error).message ?? "Drive lookup failed";
   }
 
   return (
@@ -57,7 +73,9 @@ export default async function SellingPage({
 
           <Tabs current={tab} buyersCount={buyers.length} driveCount={driveFiles.length} />
 
-          {tab === "pricing" && <PricingSheet inputs={pricing} />}
+          {tab === "pricing" && (
+            <PricingSheetEmbed fileId={pricingSheetId} viewLink={pricingSheetLink} error={pricingSheetError} />
+          )}
           {tab === "buyers" && <BuyerBoard buyers={buyers} />}
           {tab === "drive" && (
             <DriveSection files={driveFiles} folderLink={driveFolderLink} error={driveError} />

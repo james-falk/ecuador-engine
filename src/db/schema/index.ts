@@ -19,3 +19,4 @@ export * from "./lead-proposals";
 export * from "./lead-contact-history";
 export * from "./buyers";
 export * from "./pricing-inputs";
+export * from "./intel-documents";

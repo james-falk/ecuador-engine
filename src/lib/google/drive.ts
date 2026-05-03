@@ -205,12 +205,29 @@ export async function findChildByName(
   return match ?? null;
 }
 
-// Find a subfolder under the Ecuador root whose name (case-insensitive)
-// matches the given company name. Returns null if not found OR if the
-// engine isn't configured (no Ecuador root).
+// Hardcoded company → Drive subfolder name mapping. Owner-managed; we
+// don't try to magically match accents or spelling variants. If a folder
+// is renamed in Drive, update this table — single source of truth.
+//
+// Keys are companies.name values from the DB (case-insensitive match).
+const COMPANY_FOLDER_OVERRIDES: Record<string, string> = {
+  "finca del dragón": "Finca Del Dragon",
+  "puresol imports":  "PureSol Imports",
+};
+
+// Find a subfolder under the Ecuador root for a given company. First tries
+// the hardcoded override, then falls back to a case-insensitive name match.
+// Returns null if not found OR the engine isn't configured.
 export async function findCompanyFolder(companyName: string, email?: string): Promise<DriveItem | null> {
   const ecuador = getEcuadorRootId();
   if (!ecuador) return null;
+
+  const override = COMPANY_FOLDER_OVERRIDES[companyName.trim().toLowerCase()];
+  if (override) {
+    const child = await findChildByName(ecuador, override, email);
+    if (child && child.isFolder) return child;
+  }
+
   const child = await findChildByName(ecuador, companyName, email);
   if (child && child.isFolder) return child;
   return null;
@@ -226,11 +243,29 @@ export async function listCompanyFolder(companyName: string, email?: string): Pr
   return { folder, files };
 }
 
-// Walk a slash-separated path under a starting folder. Returns the final
-// DriveItem (file or folder) or null if any segment is missing.
+// Walk a slash-separated path. Always starts at the Ecuador root —
+// callers cannot escape the subtree by passing a different starting
+// folder. Returns the final DriveItem (file or folder) or null if any
+// segment is missing.
 //
-// Example: resolvePath("root", "Ecuador/Selling in US/Pricing") → file or null.
-export async function resolvePath(
+// Example: resolvePath("Selling in US/Documents/Pricing Sheet.xlsx") → file or null.
+//
+// NOTE: callers that need to traverse from My Drive root (rare —
+// admin-only) should use resolvePathUnscoped explicitly.
+export async function resolvePath(path: string, email?: string): Promise<DriveItem | null> {
+  const ecuador = getEcuadorRootId();
+  if (!ecuador) {
+    throw new DriveScopeError(
+      "ECUADOR_DRIVE_FOLDER_ID is not set. Configure it in .env.local before resolving Drive paths."
+    );
+  }
+  return resolvePathUnscoped(ecuador, path, email);
+}
+
+// Admin-only: resolve a path from any starting folder. Used by the
+// read-drive-file CLI script to bootstrap (e.g. find the Ecuador folder
+// itself). Not callable from user-facing surfaces.
+export async function resolvePathUnscoped(
   startFolderId: string,
   path: string,
   email?: string
