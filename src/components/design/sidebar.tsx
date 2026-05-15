@@ -1,25 +1,20 @@
 "use client";
 
-import * as React from "react";
 import { useRouter, usePathname } from "next/navigation";
 import type { Entity } from "@/lib/data";
-import { PitayaGlyph, Icon, EntityChip, type IconName } from "./icons";
+import { PitayaGlyph, Icon, type IconName } from "./icons";
 
 type Pillar = { id: string; label: string; icon: IconName; href: string };
 
-// Pillar order: items above Companies render first via slice(0, COMPANIES_INSERT),
-// Companies expandable group renders next, items below render last via slice(COMPANIES_INSERT).
-// Final shape (top → bottom): Home / Pending Items / Globe / Companies / Selling / Harvests / Expenses / Income.
-const COMPANIES_INSERT = 3;
+// MVP nav: daily operations only. Future/admin routes remain available by URL,
+// but the sidebar should not make the app feel bigger than today's work.
 const PILLARS: Pillar[] = [
-  { id: "home",     label: "Home",          icon: "home",  href: "/" },
-  { id: "pending",  label: "Pending Items", icon: "check", href: "/pending" },
-  { id: "globe",    label: "Globe",         icon: "globe", href: "/globe" },
-  // — Companies group inserted here —
-  { id: "selling",  label: "Selling",       icon: "tag",   href: "/selling" },
-  { id: "harvests", label: "Harvests",      icon: "leaf",  href: "/harvests" },
-  { id: "expenses", label: "Expenses",      icon: "coin",  href: "/expenses" },
-  { id: "income",   label: "Income sheet",  icon: "spark", href: "/income" },
+  { id: "home",     label: "Home",     icon: "home",  href: "/" },
+  { id: "pending",  label: "Pending",  icon: "check", href: "/pending" },
+  { id: "globe",    label: "Globe",    icon: "globe", href: "/globe" },
+  { id: "expenses", label: "Expenses", icon: "coin",  href: "/expenses" },
+  { id: "harvests", label: "Harvests", icon: "leaf",  href: "/harvests" },
+  { id: "pricing",  label: "Pricing",  icon: "tag",   href: "/selling" },
 ];
 
 export function Sidebar({
@@ -33,10 +28,8 @@ export function Sidebar({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [companiesOpen, setCompaniesOpen] = React.useState(true);
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(href + "/"));
-  const activeCompanySlug = pathname.startsWith("/companies/") ? pathname.split("/")[2] : null;
 
   return (
     <aside
@@ -82,105 +75,20 @@ export function Sidebar({
         </div>
       </div>
 
-      <div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {PILLARS.slice(0, COMPANIES_INSERT).map((p) => (
-            <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
-          ))}
-
-          {/* Label clicks navigate to /companies index; chevron toggles the expanded list. */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "14px 1fr 22px",
-              alignItems: "center",
-              gap: 10,
-              padding: "6px 12px",
-              borderRadius: 6,
-              background: isActive("/companies") && !activeCompanySlug ? "var(--bg-3)" : "transparent",
-              color: "var(--text-1)",
-              fontSize: 12.5,
-              cursor: "pointer",
-            }}
-          >
-            <Icon name="box" size={13} color="var(--text-2)" />
-            <button
-              type="button"
-              onClick={() => router.push("/companies")}
-              style={{ background: "transparent", border: 0, padding: 0, cursor: "pointer", color: "inherit", textAlign: "left", fontSize: "inherit" }}
-            >
-              Companies
-            </button>
-            <button
-              type="button"
-              onClick={() => setCompaniesOpen((v) => !v)}
-              aria-label={companiesOpen ? "Collapse" : "Expand"}
-              style={{
-                background: "transparent",
-                border: 0,
-                padding: 0,
-                cursor: "pointer",
-                display: "inline-flex",
-                justifyContent: "flex-end",
-                transform: companiesOpen ? "rotate(90deg)" : "rotate(0)",
-                transition: "transform 160ms",
-              }}
-            >
-              <Icon name="chev" size={10} color="var(--text-3)" />
-            </button>
-          </div>
-          {companiesOpen && (
-            <div style={{ display: "flex", flexDirection: "column", paddingLeft: 22, gap: 1, marginBottom: 4 }}>
-              {entities.map((e) => {
-                const isCurrent = activeCompanySlug === e.id;
-                return (
-                  <button
-                    key={e.id}
-                    onClick={() => router.push(`/companies/${e.id}`)}
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "20px 1fr auto",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "5px 10px",
-                      borderRadius: 6,
-                      border: 0,
-                      background: isCurrent ? "var(--bg-3)" : "transparent",
-                      color: isCurrent ? "var(--text-0)" : "var(--text-1)",
-                      cursor: "pointer",
-                      textAlign: "left",
-                      fontSize: 12,
-                    }}
-                  >
-                    <EntityChip entity={e} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</span>
-                    <span className="mono" style={{ fontSize: 9.5, color: "var(--text-3)" }}>{e.country}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {PILLARS.slice(COMPANIES_INSERT).map((p) => (
-            <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
-          ))}
-        </div>
-      </div>
+      <nav aria-label="Primary" style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+        {PILLARS.map((p) => (
+          <NavRow key={p.id} active={isActive(p.href)} icon={p.icon} label={p.label} onClick={() => router.push(p.href)} />
+        ))}
+      </nav>
 
       <div style={{ flex: 1 }} />
 
       <div style={{ borderTop: "1px solid var(--line-soft)", paddingTop: 8, marginTop: 8 }}>
         <NavRow
-          active={isActive("/activity")}
-          icon="clock"
-          label="Activity"
-          onClick={() => router.push("/activity")}
-        />
-        <NavRow
-          active={isActive("/drive")}
-          icon="file"
-          label="Drive"
-          onClick={() => router.push("/drive")}
+          active={isActive("/companies")}
+          icon="box"
+          label="Companies"
+          onClick={() => router.push("/companies")}
         />
         <NavRow
           active={isActive("/admin/google-auth")}

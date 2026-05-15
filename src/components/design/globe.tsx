@@ -12,7 +12,8 @@
 
 import * as React from "react";
 
-type Pin = { id: string; label: string; role: string; lat: number; lon: number; color: "green" | "amber" };
+export type GlobePin = { id: string; label: string; role: string; lat: number; lon: number; color: "green" | "amber" | "sky" | "pitaya" };
+type Pin = GlobePin;
 
 const CONTINENT_POLYGONS: number[][][] = [
   // North America
@@ -180,7 +181,7 @@ const PINS: Pin[] = [
   { id: "gardencity",  label: "Garden City, MI",   role: "home base",     lat: 42.32, lon: -83.34, color: "green" },
 ];
 
-const ARCS = [
+const DEFAULT_ARCS: Array<{ from: Pin; to: Pin; duration: number; delay: number }> = [
   { from: PINS[0], to: PINS[1], duration: 6.5, delay: 0 },
 ];
 
@@ -218,12 +219,16 @@ export function Globe({
   tilt = -0.32,
   interactive = false,
   autoRotate = true,
+  pins = PINS,
+  arcs = DEFAULT_ARCS,
 }: {
   size?: number;
   opacity?: number;
   tilt?: number;
   interactive?: boolean;
   autoRotate?: boolean;
+  pins?: GlobePin[];
+  arcs?: Array<{ from: GlobePin; to: GlobePin; duration?: number; delay?: number }>;
 }) {
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const startRef = React.useRef<number>(0);
@@ -337,6 +342,10 @@ export function Globe({
       const dotOcean  = isLight ? "oklch(0.82 0.015 150)" : "oklch(0.32 0.012 150)";
       const greenAccent = readVar("--green") || "oklch(0.74 0.16 145)";
       const amberAccent = readVar("--amber") || "oklch(0.82 0.15 78)";
+      const skyAccent = readVar("--sky") || "oklch(0.62 0.12 220)";
+      const pitayaAccent = readVar("--pitaya") || "oklch(0.64 0.22 12)";
+      const accentFor = (color: GlobePin["color"]) =>
+        color === "amber" ? amberAccent : color === "sky" ? skyAccent : color === "pitaya" ? pitayaAccent : greenAccent;
 
       ctx.strokeStyle = isLight ? "oklch(0.78 0.012 150 / 0.35)" : "oklch(0.4 0.012 150 / 0.5)";
       ctx.lineWidth = 1;
@@ -384,16 +393,17 @@ export function Globe({
       }
       ctx.globalAlpha = 1;
 
-      for (const arc of ARCS) drawArc(ctx, arc, cx, cy, R, yaw, tiltVal, t, greenAccent, amberAccent);
+      const activeArcs = arcs.map((arc, i) => ({ ...arc, duration: arc.duration ?? 6.5, delay: arc.delay ?? i * 0.7 }));
+      for (const arc of activeArcs) drawArc(ctx, arc, cx, cy, R, yaw, tiltVal, t, greenAccent, amberAccent);
 
-      for (const pin of PINS) {
+      for (const pin of pins) {
         let v = lonLatToVec3(pin.lon, pin.lat);
         v = rotateY(v, yaw);
         v = rotateX(v, tiltVal);
         if (v[2] < -0.05) continue;
         const x = cx + v[0] * R;
         const y = cy - v[1] * R;
-        const accent = pin.color === "amber" ? amberAccent : greenAccent;
+        const accent = accentFor(pin.color);
         drawPin(ctx, x, y, accent, t, pin.id);
       }
 
@@ -402,7 +412,7 @@ export function Globe({
 
     draw();
     return () => cancelAnimationFrame(raf);
-  }, [size, theme, autoRotate, interactive]);
+  }, [size, theme, autoRotate, interactive, pins, arcs]);
 
   return (
     <div

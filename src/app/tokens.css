@@ -55,20 +55,20 @@
 
 /* light theme — soft cream/paper, agricultural greens preserved */
 :root[data-theme="light"] {
-  --bg-0: oklch(0.985 0.005 95);     /* page — warm paper white */
-  --bg-1: oklch(0.96 0.006 95);      /* sidebar */
-  --bg-2: oklch(1 0 0);              /* card */
-  --bg-3: oklch(0.94 0.008 95);      /* card hover / inset */
-  --bg-4: oklch(0.91 0.01 95);       /* input */
+  --bg-0: oklch(0.975 0.012 92);     /* page — warm map paper */
+  --bg-1: oklch(0.945 0.018 95);     /* sidebar / rail */
+  --bg-2: oklch(0.997 0.003 95);     /* card */
+  --bg-3: oklch(0.925 0.018 95);     /* card hover / inset */
+  --bg-4: oklch(0.885 0.022 95);     /* input */
 
-  --line-soft: oklch(0.82 0.012 95 / 0.7);
-  --line: oklch(0.74 0.014 95 / 0.8);
-  --line-strong: oklch(0.62 0.016 95);
+  --line-soft: oklch(0.78 0.018 95 / 0.9);
+  --line: oklch(0.68 0.022 95 / 0.95);
+  --line-strong: oklch(0.55 0.028 95);
 
-  --text-0: oklch(0.22 0.02 150);    /* primary */
-  --text-1: oklch(0.36 0.018 150);   /* secondary */
-  --text-2: oklch(0.5 0.014 150);    /* tertiary, labels */
-  --text-3: oklch(0.62 0.012 150);   /* hint */
+  --text-0: oklch(0.18 0.025 150);   /* primary */
+  --text-1: oklch(0.30 0.024 150);   /* secondary */
+  --text-2: oklch(0.43 0.018 150);   /* tertiary, labels */
+  --text-3: oklch(0.54 0.014 150);   /* hint */
 
   /* accents — slightly deeper for contrast on light bg */
   --green: oklch(0.56 0.16 145);
@@ -87,8 +87,14 @@
 
   --pitaya: oklch(0.58 0.22 12);
 
-  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.6) inset, 0 6px 20px -10px oklch(0.22 0.02 150 / 0.18);
-  --shadow-pop:  0 1px 0 oklch(1 0 0 / 0.6) inset, 0 24px 60px -22px oklch(0.22 0.02 150 / 0.24);
+  --shadow-card: 0 1px 0 oklch(1 0 0 / 0.7) inset, 0 8px 24px -16px oklch(0.18 0.025 150 / 0.24);
+  --shadow-pop:  0 1px 0 oklch(1 0 0 / 0.7) inset, 0 26px 70px -30px oklch(0.18 0.025 150 / 0.30);
+
+  --crew-skin: oklch(0.78 0.09 76);
+  --crew-outline: oklch(0.18 0.025 150);
+  --map-grid: oklch(0.78 0.018 95 / 0.55);
+  --map-water-dot: oklch(0.74 0.025 210 / 0.72);
+  --map-land-dot: oklch(0.34 0.07 150);
 }
 
 /* base reset */
@@ -101,7 +107,7 @@
   font-feature-settings: "ss01", "cv11", "tnum";
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.005em;
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.45;
 }
 

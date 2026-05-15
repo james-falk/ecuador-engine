@@ -31,9 +31,9 @@ const themeBootScript = `
   (function () {
     try {
       var stored = localStorage.getItem('ee-theme');
-      document.documentElement.dataset.theme = stored || 'dark';
+      document.documentElement.dataset.theme = stored || 'light';
     } catch (_) {
-      document.documentElement.dataset.theme = 'dark';
+      document.documentElement.dataset.theme = 'light';
     }
   })();
 `;
@@ -55,7 +55,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     : null;
 
   return (
-    <html lang="en" data-theme="dark" className={`${interTight.variable} ${jetbrainsMono.variable}`}>
+    <html lang="en" data-theme="light" className={`${interTight.variable} ${jetbrainsMono.variable}`}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootScript }} />
       </head>
