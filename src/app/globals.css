@@ -110,15 +110,74 @@ body { font-family: var(--font-sans); color: var(--text-0); }
   .ee-page-pad { padding: 16px 14px 32px; }
 }
 
-/* The expense weekly grid is intentionally wide. On mobile, let it scroll
- * horizontally rather than reflow — preserves the data shape so weekly
- * comparisons still work. */
+/* Expense weekly view. Desktop keeps the spreadsheet; phones use readable cards.
+ * The old mobile behavior kept the wide grid and relied on horizontal scroll,
+ * which made the sheet render as clipped, tiny columns in iOS Safari. */
 .ee-grid-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
 }
-.ee-grid-scroll > * {
+.ee-expense-grid-table {
   min-width: 880px;
+}
+.ee-expense-week-cards {
+  display: none;
+}
+@media (max-width: 767px) {
+  .ee-expense-grid-desktop {
+    display: none;
+  }
+  .ee-expense-week-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ee-expense-week-card {
+    border: 1px solid var(--line-soft);
+    border-radius: 12px;
+    background: var(--bg-1);
+    overflow: hidden;
+  }
+  .ee-expense-week-card-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    background: var(--bg-2);
+    font-size: 12.5px;
+  }
+  .ee-expense-week-lines {
+    display: flex;
+    flex-direction: column;
+  }
+  .ee-expense-week-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--line-soft);
+    font-size: 13px;
+  }
+  .ee-expense-week-line:first-child {
+    border-top: 0;
+  }
+  .ee-expense-week-label {
+    color: var(--text-1);
+    font-weight: 500;
+  }
+  .ee-expense-week-note,
+  .ee-expense-empty-week {
+    margin-top: 3px;
+    color: var(--text-3);
+    font-size: 11.5px;
+    line-height: 1.35;
+  }
+  .ee-expense-empty-week {
+    margin: 0;
+    padding: 14px;
+  }
 }
 
 /* Stack the network globe stage on mobile (globe above rail). */
